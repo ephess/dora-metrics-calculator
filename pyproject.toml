@@ -36,6 +36,14 @@ build-backend = "setuptools.build_meta"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --cov=dora_metrics --cov-report=term-missing"
+markers = [
+    "unit: Fast unit tests with mocked dependencies",
+    "integration: Integration tests with real file system",
+    "e2e: End-to-end tests with full workflow",
+    "slow: Tests that take more than 5 seconds",
+    "requires_github: Tests that require GitHub API access",
+    "requires_s3: Tests that require S3 access",
+]
 
 [tool.black]
 line-length = 100

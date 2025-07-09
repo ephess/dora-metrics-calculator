@@ -210,25 +210,66 @@ This document outlines a step-by-step implementation plan for the DORA metrics b
 
 ## Testing Strategy
 
-### Test Pyramid
-1. **Unit Tests** (70%): Fast, isolated tests for individual functions/classes
-2. **Integration Tests** (20%): Test component interactions
-3. **End-to-End Tests** (10%): Full workflow tests with real data
+### Test Organization
 
-### Test Data Strategy
-1. Create a `test_fixtures/` directory with:
-   - Sample git repository (small)
-   - Mock API responses
-   - Sample CSV files
-   - Known-good calculation results
+#### Directory Structure
+```
+tests/
+├── unit/                 # Fast, isolated tests with mocks
+├── integration/          # Tests with real dependencies
+├── e2e/                  # Full workflow tests
+├── performance/          # Performance benchmarks
+└── fixtures/             # Shared test data
+    ├── repos/           # Sample git repositories
+    ├── api_responses/   # Mock API responses
+    ├── csv_samples/     # Sample CSV files
+    └── factories.py     # Test data generators
+```
 
-2. Use factories for test data generation
+#### Test Types
 
-### Continuous Testing
-- Run tests before each commit
-- Use pytest markers for test categories
-- Separate slow integration tests
-- Generate coverage reports
+1. **Unit Tests** (`tests/unit/`) - 70% of tests
+   - Fast execution (<100ms per test)
+   - No external dependencies
+   - Heavy use of mocks
+   - Test single functions/methods
+   - Example: `test_calculate_lead_time_with_no_deployments_returns_zero()`
+
+2. **Integration Tests** (`tests/integration/`) - 20% of tests
+   - Medium speed (100ms-5s per test)
+   - Real file system, mocked external APIs
+   - Test module boundaries
+   - Example: `test_storage_manager_concurrent_operations()`
+
+3. **End-to-End Tests** (`tests/e2e/`) - 10% of tests
+   - Slow execution (>5s per test)
+   - Full application flow
+   - May use real APIs with caution
+   - Example: `test_full_extraction_pipeline()`
+
+### Test Naming Convention
+```python
+def test_<function>_<scenario>_<expected_result>():
+    """Test that <function> <expected behavior> when <scenario>."""
+```
+
+### Pytest Markers
+```python
+@pytest.mark.unit          # Fast unit tests
+@pytest.mark.integration   # Integration tests
+@pytest.mark.e2e          # End-to-end tests
+@pytest.mark.slow         # Tests taking >5s
+@pytest.mark.requires_github  # Tests needing GitHub token
+@pytest.mark.requires_s3   # Tests needing S3 access
+```
+
+### Running Tests
+- `make test-unit` - Fast feedback during development
+- `make test-integration` - Before committing
+- `make test` - All tests before pushing
+- `pytest -m "not slow"` - Skip slow tests
+- `pytest -m "not requires_github"` - Run without GitHub token
+- `pytest -m "not requires_s3"` - Run without S3 access
 
 ## Development Workflow
 

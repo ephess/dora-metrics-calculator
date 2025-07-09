@@ -25,10 +25,19 @@ test:  ## Run all tests
 	$(VENV_ACTIVATE) pytest tests/ -v
 
 test-unit:  ## Run unit tests only
-	$(VENV_ACTIVATE) pytest tests/unit/ -v
+	$(VENV_ACTIVATE) pytest tests/unit/ -v -m "unit"
 
 test-integration:  ## Run integration tests only
-	$(VENV_ACTIVATE) pytest tests/integration/ -v
+	$(VENV_ACTIVATE) pytest tests/integration/ -v -m "integration"
+
+test-e2e:  ## Run end-to-end tests only
+	$(VENV_ACTIVATE) pytest tests/e2e/ -v -m "e2e"
+
+test-fast:  ## Run all tests except slow ones
+	$(VENV_ACTIVATE) pytest tests/ -v -m "not slow"
+
+test-no-external:  ## Run tests without external dependencies
+	$(VENV_ACTIVATE) pytest tests/ -v -m "not requires_github and not requires_s3"
 
 coverage:  ## Run tests with coverage report
 	$(VENV_ACTIVATE) pytest tests/ --cov=dora_metrics --cov-report=term-missing --cov-report=xml --cov-report=html
