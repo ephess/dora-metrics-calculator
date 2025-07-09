@@ -77,7 +77,7 @@ graph TB
     subgraph "Core Application Layer"
         subgraph "Extractors"
             GE[Git<br/>Extractor]
-            GH[GitHub<br/>API Client]
+            GH[GitHub<br/>GraphQL Client]
         end
         
         subgraph "Processors"
@@ -89,13 +89,15 @@ graph TB
     subgraph "Data Access Layer"
         RM[Repository<br/>Manager]
         CH[CSV<br/>Handler]
+        SM[Storage<br/>Manager]
     end
     
     subgraph "Storage Layer"
-        RD[(Raw Data<br/>JSON)]
-        PD[(Processed<br/>CSV)]
-        RP[(Reports<br/>HTML)]
-        MD[(Metadata<br/>JSON)]
+        subgraph "Local / S3"
+            RD[(Raw Data<br/>JSON)]
+            PD[(Processed<br/>CSV)]
+            MD[(Metadata<br/>JSON)]
+        end
     end
     
     CLI --> GE
@@ -108,10 +110,11 @@ graph TB
     DA --> CH
     MC --> CH
     
-    RM --> RD
-    CH --> PD
-    MC --> RP
-    RM --> MD
+    RM --> SM
+    CH --> SM
+    SM --> RD
+    SM --> PD
+    SM --> MD
 ```
 
 ### Key Classes and Interfaces
@@ -143,29 +146,56 @@ class Deployment:
     release_tag: Optional[str]
     is_rollback: bool
 
-# Core Interfaces
-class Extractor(ABC):
-    def extract(self, since: datetime, until: datetime) -> List[Any]:
+# Data Extractors
+class GitExtractor:
+    def extract_commits(self, repo_path: str, branch: str, since: datetime, until: datetime) -> List[Commit]:
         pass
 
-class MetricCalculator(ABC):
-    def calculate(self, data: pd.DataFrame, period: str) -> Dict[str, float]:
+class GitHubGraphQLClient:
+    def get_pull_requests(self, repo: str, since: datetime, until: datetime) -> List[PullRequest]:
+        """Fetch PRs using GraphQL for efficient pagination"""
+        pass
+    def get_releases(self, repo: str, since: datetime, until: datetime) -> List[Deployment]:
+        """Fetch releases using GraphQL"""
+        pass
+    def get_pr_commits_batch(self, repo: str, pr_numbers: List[int]) -> Dict[int, List[str]]:
+        """Batch fetch commit SHAs for multiple PRs in one query"""
         pass
 
-# Concrete Implementations
-class GitExtractor(Extractor):
-    def extract_commits(self, branch: str) -> List[Commit]:
+# Storage Abstraction
+class StorageManager:
+    def __init__(self, storage_type: str = "local", bucket: Optional[str] = None):
+        """Initialize with 'local' or 's3' storage"""
+        pass
+    
+    def read(self, path: str) -> str:
+        """Read file from local filesystem or S3"""
+        pass
+    
+    def write(self, path: str, content: str) -> None:
+        """Write file to local filesystem or S3"""
+        pass
+    
+    def exists(self, path: str) -> bool:
+        """Check if file exists"""
+        pass
+    
+    def list(self, prefix: str) -> List[str]:
+        """List files with given prefix"""
         pass
 
-class GitHubAPIClient(Extractor):
-    def get_pull_requests(self) -> List[PullRequest]:
-        pass
-    def get_releases(self) -> List[Deployment]:
-        pass
+# Metrics Calculation Functions
+def calculate_lead_time(data: pd.DataFrame, period: str) -> Dict[str, float]:
+    pass
 
-class LeadTimeCalculator(MetricCalculator):
-    def calculate(self, data: pd.DataFrame, period: str) -> Dict[str, float]:
-        pass
+def calculate_deployment_frequency(data: pd.DataFrame, period: str) -> Dict[str, float]:
+    pass
+
+def calculate_change_failure_rate(data: pd.DataFrame, period: str) -> Dict[str, float]:
+    pass
+
+def calculate_mttr(data: pd.DataFrame, period: str) -> Dict[str, float]:
+    pass
 ```
 
 ## 3. Process View (Runtime)
@@ -177,17 +207,18 @@ sequenceDiagram
     participant User
     participant CLI
     participant GitExtractor
-    participant GitHubAPI
+    participant GitHubGraphQL
     participant DataAssociator
     participant CSVHandler
     
     User->>CLI: extract
     CLI->>GitExtractor: get_commits
     GitExtractor-->>CLI: commits
-    CLI->>GitHubAPI: get_prs
-    GitHubAPI-->>CLI: prs
-    CLI->>GitHubAPI: get_releases
-    GitHubAPI-->>CLI: releases
+    CLI->>GitHubGraphQL: GraphQL query (PRs + Releases)
+    Note over GitHubGraphQL: Single query fetches<br/>PRs, releases, and labels
+    GitHubGraphQL-->>CLI: prs + releases
+    CLI->>GitHubGraphQL: Batch query PR commits
+    GitHubGraphQL-->>CLI: pr_commit_mapping
     CLI->>DataAssociator: associate_data
     DataAssociator-->>CLI: annotated_data
     CLI->>CSVHandler: export_csv
@@ -224,7 +255,6 @@ graph TD
     subgraph "dora-metrics/"
         subgraph "src/dora_metrics/"
             CLI[cli.py]
-            CFG[config.py]
             
             subgraph "extractors/"
                 GIT[git_extractor.py]
@@ -237,20 +267,15 @@ graph TD
             end
             
             subgraph "calculators/"
-                LT[lead_time.py]
-                DF[deployment_frequency.py]
-                CFR[change_failure_rate.py]
-                MTTR[mttr.py]
+                CALC[metrics.py]
             end
             
             subgraph "storage/"
                 REP[repository_manager.py]
                 CSV[csv_handler.py]
+                SM[storage_manager.py]
             end
             
-            subgraph "reports/"
-                HTML[html_generator.py]
-            end
         end
         
         subgraph "tests/"
@@ -271,12 +296,11 @@ graph TD
 - **Language**: Python 3.9+
 - **CLI Framework**: Click
 - **Git Operations**: GitPython
-- **GitHub API**: PyGithub
+- **GitHub API**: GraphQL via gql/httpx
 - **Data Processing**: pandas, numpy
-- **Configuration**: pydantic, PyYAML
 - **Testing**: pytest, pytest-mock
-- **Visualization**: matplotlib, plotly
-- **Storage**: JSON, CSV
+- **Storage**: JSON, CSV (local filesystem or S3)
+- **Object Storage**: boto3 for S3-compatible storage
 
 ## 5. Physical View (Deployment)
 
@@ -321,20 +345,6 @@ graph TB
     DC --> ART
 ```
 
-#### Option 3: Containerized Service
-```yaml
-# docker-compose.yml
-version: '3.8'
-services:
-  dora-metrics:
-    build: .
-    volumes:
-      - ./data:/app/data
-      - ${REPO_PATH}:/repo:ro
-    environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-    command: update
-```
 
 ### Data Flow Architecture
 
@@ -382,10 +392,9 @@ graph LR
 - Audit logging for all data modifications
 
 ### Performance Optimization
-- Incremental extraction to minimize API calls
-- Caching of GitHub API responses
-- Batch processing for large repositories
-- Configurable rate limiting
+- GraphQL API for efficient batch queries (fetch PRs, releases, and commits in minimal requests)
+- Incremental extraction to minimize API calls (using raw JSON files to avoid re-fetching)
+- Configurable rate limiting for GitHub API
 
 ### Error Handling Flow
 
@@ -404,45 +413,16 @@ graph TD
     H --> J[User Notification]
 ```
 
-### Extensibility Points
-- Plugin architecture for custom extractors
-- Configurable metric calculations
-- Support for non-GitHub repositories
-- Custom report formats
-
 ### Monitoring and Observability
 - Structured logging with levels
-- Metrics export for monitoring systems
-- Health check endpoint for service mode
 - Progress indicators for long operations
 
 ### Configuration Management
 
-```mermaid
-graph TD
-    subgraph "Configuration Sources"
-        ENV[Environment<br/>Variables]
-        CFG[Config File<br/>dora_config.yaml]
-        CLI[CLI<br/>Arguments]
-    end
-    
-    subgraph "Configuration Loader"
-        LOAD[Config<br/>Loader]
-        VAL[Validation<br/>pydantic]
-        MRG[Merge<br/>Strategy]
-    end
-    
-    subgraph "Application"
-        APP[Application<br/>Context]
-    end
-    
-    ENV --> LOAD
-    CFG --> LOAD
-    CLI --> LOAD
-    LOAD --> VAL
-    VAL --> MRG
-    MRG --> APP
-    
-    style CLI fill:#f9f,stroke:#333,stroke-width:2px
-    style MRG fill:#9f9,stroke:#333,stroke-width:2px
-```
+Configuration is handled via:
+- CLI arguments for all parameters
+- Environment variables for sensitive data:
+  - `GITHUB_TOKEN` for GitHub API access
+  - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for S3 (optional)
+  - `DORA_STORAGE_TYPE` to specify 'local' or 's3' (defaults to 'local')
+  - `DORA_S3_BUCKET` for S3 bucket name when using S3 storage
