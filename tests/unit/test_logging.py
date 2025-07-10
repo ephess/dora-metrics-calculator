@@ -8,6 +8,7 @@ import pytest
 from dora_metrics.logging import setup_logging, get_logger
 
 
+@pytest.mark.unit
 class TestLogging:
     """Test logging configuration."""
     

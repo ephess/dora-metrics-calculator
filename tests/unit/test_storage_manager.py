@@ -8,6 +8,7 @@ import shutil
 from dora_metrics.storage import StorageManager
 
 
+@pytest.mark.unit
 class TestLocalStorageBackend:
     """Test local filesystem storage backend."""
     
@@ -148,43 +149,3 @@ class TestLocalStorageBackend:
         """Test that S3 storage raises NotImplementedError."""
         with pytest.raises(NotImplementedError, match="S3 storage backend not yet implemented"):
             StorageManager(storage_type="s3")
-
-
-class TestStorageManagerIntegration:
-    """Integration tests for storage manager."""
-    
-    @pytest.fixture
-    def storage(self, tmp_path):
-        """Create a storage manager with tmp_path."""
-        return StorageManager(storage_type="local", base_path=str(tmp_path))
-    
-    def test_complex_workflow(self, storage):
-        """Test a complex workflow with multiple operations."""
-        # Write multiple files
-        storage.write("raw/commits.json", '{"commits": []}')
-        storage.write("raw/prs.json", '{"prs": []}')
-        storage.write("processed/data.csv", "id,name\n1,test")
-        
-        # List all files
-        all_files = storage.list("")
-        assert len(all_files) == 3
-        
-        # List by prefix
-        raw_files = storage.list("raw/")
-        assert len(raw_files) == 2
-        
-        # Read and modify JSON
-        commits_data = storage.read_json("raw/commits.json")
-        commits_data["commits"].append({"sha": "abc123"})
-        storage.write_json("raw/commits.json", commits_data)
-        
-        # Verify modification
-        updated_data = storage.read_json("raw/commits.json")
-        assert len(updated_data["commits"]) == 1
-        assert updated_data["commits"][0]["sha"] == "abc123"
-        
-        # Clean up
-        for file in all_files:
-            storage.delete(file)
-        
-        assert storage.list("") == []
