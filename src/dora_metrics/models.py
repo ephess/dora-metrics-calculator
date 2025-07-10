@@ -118,8 +118,7 @@ class Commit:
     pr_number: Optional[int] = None
     
     # Deployment info (to be filled later)
-    is_deployment: bool = False
-    deployment_date: Optional[datetime] = None
+    deployment_tag: Optional[str] = None
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -136,8 +135,7 @@ class Commit:
             "additions": self.additions,
             "deletions": self.deletions,
             "pr_number": self.pr_number,
-            "is_deployment": self.is_deployment,
-            "deployment_date": self.deployment_date.isoformat() if self.deployment_date else None,
+            "deployment_tag": self.deployment_tag,
         }
     
     @classmethod
@@ -156,7 +154,5 @@ class Commit:
             additions=data.get("additions", 0),
             deletions=data.get("deletions", 0),
             pr_number=data.get("pr_number"),
-            is_deployment=data.get("is_deployment", False),
-            deployment_date=datetime.fromisoformat(data["deployment_date"]) 
-                          if data.get("deployment_date") else None,
+            deployment_tag=data.get("deployment_tag"),
         )
