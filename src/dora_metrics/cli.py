@@ -22,11 +22,10 @@ from .storage.repository import DataRepository
 from .storage.storage_manager import StorageManager
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from .logging import setup_logging, get_logger
+
+setup_logging(level="INFO")
+logger = get_logger(__name__)
 
 
 class CLIContext:
@@ -107,53 +106,21 @@ def extract_github(ctx, owner: str, repo: str, token: str, since: Optional[str],
         until_date = datetime.fromisoformat(until).replace(tzinfo=timezone.utc) if until else None
         
         # Create client
-        client = GitHubGraphQLClient(token)
+        client = GitHubGraphQLClient(token, owner, repo)
         
         # Extract PRs
         click.echo(f"Extracting PRs from {owner}/{repo}...")
-        with click.progressbar(
-            length=100,
-            label='Extracting PRs',
-            show_percent=True,
-            show_pos=True
-        ) as bar:
-            prs = []
-            
-            def pr_callback(pr_batch, total_fetched, estimated_total):
-                prs.extend(pr_batch)
-                if estimated_total:
-                    bar.update(int((total_fetched / estimated_total) * 100) - bar.pos)
-            
-            client.fetch_pull_requests(
-                owner=owner,
-                repo=repo,
-                since=since_date,
-                until=until_date,
-                callback=pr_callback
-            )
+        prs = client.fetch_pull_requests(
+            since=since_date,
+            until=until_date
+        )
         
         # Extract releases
         click.echo(f"Extracting releases from {owner}/{repo}...")
-        with click.progressbar(
-            length=100,
-            label='Extracting releases',
-            show_percent=True,
-            show_pos=True
-        ) as bar:
-            deployments = []
-            
-            def release_callback(release_batch, total_fetched, estimated_total):
-                deployments.extend(release_batch)
-                if estimated_total:
-                    bar.update(int((total_fetched / estimated_total) * 100) - bar.pos)
-            
-            client.fetch_releases(
-                owner=owner,
-                repo=repo,
-                since=since_date,
-                until=until_date,
-                callback=release_callback
-            )
+        deployments = client.fetch_releases(
+            since=since_date,
+            until=until_date
+        )
         
         # Save data
         ctx.obj.repository.save_pull_requests(repo, prs)
@@ -182,18 +149,12 @@ def associate(ctx, repo: str):
         click.echo("Associating data...")
         associator = DataAssociator()
         
-        with click.progressbar(
-            commits,
-            label='Associating commits',
-            show_percent=True,
-            show_pos=True
-        ) as bar:
-            commits = associator.associate_commits_with_prs(list(bar), prs)
+        # Associate all data
+        commits, prs = associator.associate_data(commits, prs, deployments)
         
-        commits = associator.identify_deployment_commits(commits, deployments)
-        
-        # Save updated commits
+        # Save updated commits and PRs
         ctx.obj.repository.save_commits(repo, commits)
+        ctx.obj.repository.save_pull_requests(repo, prs)
         
         # Show summary
         commits_with_prs = sum(1 for c in commits if c.pr_number)
@@ -368,9 +329,9 @@ def calculate(ctx, repo: str, period: str, since: Optional[str], until: Optional
                     'Period': period_key,
                     'Lead Time (p50)': f"{period_metrics.lead_time_p50:.1f}h" if period_metrics.lead_time_p50 else "N/A",
                     'Lead Time (p90)': f"{period_metrics.lead_time_p90:.1f}h" if period_metrics.lead_time_p90 else "N/A",
-                    'Deploy Freq': f"{period_metrics.deployment_frequency:.1f}/day",
+                    'Deploy Freq': f"{period_metrics.deployment_frequency:.1f}/day" if period_metrics.deployment_frequency else "N/A",
                     'Change Failure %': f"{period_metrics.change_failure_rate:.1%}" if period_metrics.change_failure_rate is not None else "N/A",
-                    'MTTR': f"{period_metrics.mttr_hours:.1f}h" if period_metrics.mttr_hours else "N/A"
+                    'MTTR': f"{period_metrics.mean_time_to_restore:.1f}h" if period_metrics.mean_time_to_restore else "N/A"
                 }
                 data.append(row)
             
@@ -379,13 +340,14 @@ def calculate(ctx, repo: str, period: str, since: Optional[str], until: Optional
             click.echo("=" * 80)
             click.echo(df.to_string(index=False))
             
-            # Show performance levels
-            latest_metrics = list(metrics.values())[-1]
-            click.echo("\nPerformance Level (Latest Period):")
-            click.echo(f"  Lead Time: {latest_metrics.lead_time_performance}")
-            click.echo(f"  Deployment Frequency: {latest_metrics.deployment_frequency_performance}")
-            click.echo(f"  Change Failure Rate: {latest_metrics.change_failure_rate_performance}")
-            click.echo(f"  MTTR: {latest_metrics.mttr_performance}")
+            # Show performance levels (if available)
+            if metrics:
+                latest_metrics = list(metrics.values())[-1]
+                click.echo("\nPerformance Level (Latest Period):")
+                click.echo(f"  Lead Time: {_get_lead_time_level(latest_metrics.lead_time_p50)}")
+                click.echo(f"  Deployment Frequency: {_get_deployment_frequency_level(latest_metrics.deployment_frequency)}")
+                click.echo(f"  Change Failure Rate: {_get_change_failure_rate_level(latest_metrics.change_failure_rate)}")
+                click.echo(f"  MTTR: {_get_mttr_level(latest_metrics.mean_time_to_restore)}")
         
     except Exception as e:
         click.echo(f"✗ Error calculating metrics: {e}", err=True)
@@ -456,16 +418,26 @@ def validate(ctx, repo: str, full: bool):
 @cli.command()
 @click.option('--repo', required=True, help='Repository name')
 @click.option('--detailed', is_flag=True, help='Show detailed PR health report')
+@click.option('--as-of', help='Analyze PR health as of this date (YYYY-MM-DD)')
 @click.pass_context
-def pr_health(ctx, repo: str, detailed: bool):
+def pr_health(ctx, repo: str, detailed: bool, as_of: Optional[str]):
     """Analyze PR health and flow efficiency."""
     try:
+        # Parse reference time if provided
+        reference_time = None
+        if as_of:
+            try:
+                reference_time = datetime.fromisoformat(as_of).replace(tzinfo=timezone.utc)
+            except ValueError:
+                click.echo(f"✗ Invalid date format: {as_of}. Use YYYY-MM-DD", err=True)
+                sys.exit(1)
+        
         # Load PRs
         click.echo("Loading PR data...")
         prs = ctx.obj.repository.load_pull_requests(repo)
         
         # Analyze PR health
-        analyzer = PRHealthAnalyzer()
+        analyzer = PRHealthAnalyzer(reference_time=reference_time)
         report = analyzer.analyze(prs)
         
         # Show results
@@ -509,6 +481,62 @@ def update(ctx, repo: str, force: bool):
     except Exception as e:
         click.echo(f"✗ Error updating data: {e}", err=True)
         sys.exit(1)
+
+
+def _get_lead_time_level(lead_time_hours: Optional[float]) -> str:
+    """Get performance level for lead time."""
+    if lead_time_hours is None:
+        return "N/A"
+    elif lead_time_hours < 24:  # Less than one day
+        return "Elite"
+    elif lead_time_hours < 168:  # Less than one week
+        return "High"
+    elif lead_time_hours < 720:  # Less than one month
+        return "Medium"
+    else:
+        return "Low"
+
+
+def _get_deployment_frequency_level(deploys_per_day: Optional[float]) -> str:
+    """Get performance level for deployment frequency."""
+    if deploys_per_day is None:
+        return "N/A"
+    elif deploys_per_day >= 1:  # Multiple deploys per day
+        return "Elite"
+    elif deploys_per_day >= 1/7:  # At least weekly
+        return "High"
+    elif deploys_per_day >= 1/30:  # At least monthly
+        return "Medium"
+    else:
+        return "Low"
+
+
+def _get_change_failure_rate_level(failure_rate: Optional[float]) -> str:
+    """Get performance level for change failure rate."""
+    if failure_rate is None:
+        return "N/A"
+    elif failure_rate <= 0.05:  # 5% or less
+        return "Elite"
+    elif failure_rate <= 0.10:  # 10% or less
+        return "High"
+    elif failure_rate <= 0.15:  # 15% or less
+        return "Medium"
+    else:
+        return "Low"
+
+
+def _get_mttr_level(mttr_hours: Optional[float]) -> str:
+    """Get performance level for MTTR."""
+    if mttr_hours is None:
+        return "N/A"
+    elif mttr_hours < 1:  # Less than one hour
+        return "Elite"
+    elif mttr_hours < 24:  # Less than one day
+        return "High"
+    elif mttr_hours < 168:  # Less than one week
+        return "Medium"
+    else:
+        return "Low"
 
 
 def main():

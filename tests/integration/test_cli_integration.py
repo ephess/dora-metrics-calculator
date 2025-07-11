@@ -108,7 +108,7 @@ class TestCLIIntegration:
                 merged_at=None,
                 merge_commit_sha=None,
                 author="charlie",
-                commits=[],  # No commits yet - critical issue!
+                commits=[],  # No commits yet - this is fine
                 additions=0,
                 deletions=0,
             ),
@@ -146,22 +146,7 @@ class TestCLIIntegration:
             '--output', str(csv_path)
         ])
         
-        assert result.exit_code == 1  # Should fail due to critical issue
-        assert "CRITICAL ISSUES" in result.output
-        assert "PRs without commits" in result.output
-        
-        # Fix the critical issue
-        prs[2].commits = ["pending123"]  # Add a commit to the open PR
-        repo.save_pull_requests("test-repo", prs)
-        
-        # Try export again
-        result = runner.invoke(cli, [
-            '--storage-path', temp_storage,
-            'export',
-            '--repo', 'test-repo',
-            '--output', str(csv_path)
-        ])
-        
+        # Export should succeed - PR validation is no longer done
         assert result.exit_code == 0
         assert "✓ Exported data to" in result.output
         # Check that the CSV files were created
@@ -195,13 +180,15 @@ class TestCLIIntegration:
         repo.save_pull_requests("test-repo", prs)
         repo.save_deployments("test-repo", deployments)
         
-        # Calculate weekly metrics
+        # Calculate weekly metrics for the sample data period
         result = runner.invoke(cli, [
             '--storage-path', temp_storage,
             'calculate',
             '--repo', 'test-repo',
             '--period', 'weekly',
-            '--output-format', 'table'
+            '--output-format', 'table',
+            '--since', '2024-01-01',
+            '--until', '2024-01-07'
         ])
         
         assert result.exit_code == 0
@@ -216,7 +203,9 @@ class TestCLIIntegration:
             'calculate',
             '--repo', 'test-repo',
             '--period', 'weekly',
-            '--output-format', 'json'
+            '--output-format', 'json',
+            '--since', '2024-01-01',
+            '--until', '2024-01-07'
         ])
         
         assert result.exit_code == 0
@@ -229,21 +218,14 @@ class TestCLIIntegration:
         """Test validation workflow."""
         commits, prs, deployments = sample_data
         
-        # Add a PR without commits (critical issue)
-        prs.append(
-            PullRequest(
-                number=4,
-                title="Empty PR",
-                state=PRState.OPEN,
+        # Add a deployment that references a non-existent commit (critical issue)
+        deployments.append(
+            Deployment(
+                tag_name="v2.0.0",
+                name="Version 2.0.0",
                 created_at=datetime(2024, 1, 4, 10, 0, tzinfo=timezone.utc),
-                updated_at=datetime(2024, 1, 4, 10, 0, tzinfo=timezone.utc),
-                closed_at=None,
-                merged_at=None,
-                merge_commit_sha=None,
-                author="dave",
-                commits=[],  # No commits - critical!
-                additions=0,
-                deletions=0,
+                published_at=datetime(2024, 1, 4, 10, 0, tzinfo=timezone.utc),
+                commit_sha="nonexistent123",  # This commit doesn't exist - critical!
             )
         )
         
@@ -263,7 +245,7 @@ class TestCLIIntegration:
         
         assert result.exit_code == 0  # Validate command itself succeeds
         assert "CRITICAL ISSUES" in result.output
-        assert "PRs without commits" in result.output
+        assert "references non-existent commit" in result.output
         assert "Critical issues must be fixed" in result.output
         
         # Run with full report
@@ -333,11 +315,12 @@ class TestCLIIntegration:
         repo = DataRepository(storage)
         repo.save_pull_requests("test-repo", prs)
         
-        # Run PR health analysis
+        # Run PR health analysis as of mid-January 2024
         result = runner.invoke(cli, [
             '--storage-path', temp_storage,
             'pr-health',
-            '--repo', 'test-repo'
+            '--repo', 'test-repo',
+            '--as-of', '2024-01-15'
         ])
         
         if result.exit_code != 0:
@@ -354,7 +337,8 @@ class TestCLIIntegration:
             '--storage-path', temp_storage,
             'pr-health',
             '--repo', 'test-repo',
-            '--detailed'
+            '--detailed',
+            '--as-of', '2024-01-15'
         ])
         
         assert result.exit_code == 0

@@ -38,6 +38,7 @@ class GitExtractor:
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
         max_count: Optional[int] = None,
+        progress_callback: Optional[callable] = None,
     ) -> List[Commit]:
         """
         Extract commits from the repository.
@@ -47,6 +48,7 @@ class GitExtractor:
             since: Start date for filtering commits
             until: End date for filtering commits
             max_count: Maximum number of commits to extract
+            progress_callback: Optional callback function for progress updates
 
         Returns:
             List of Commit objects
@@ -62,9 +64,26 @@ class GitExtractor:
         
         commits = []
         try:
-            for git_commit in self.repo.iter_commits(branch, **kwargs):
+            # Get total count if possible for progress
+            total_commits = None
+            if progress_callback:
+                try:
+                    total_commits = sum(1 for _ in self.repo.iter_commits(branch, **kwargs))
+                    kwargs_for_iter = kwargs.copy()  # Don't modify original kwargs
+                except:
+                    # If counting fails, continue without progress
+                    kwargs_for_iter = kwargs
+            else:
+                kwargs_for_iter = kwargs
+                
+            for i, git_commit in enumerate(self.repo.iter_commits(branch, **kwargs_for_iter)):
                 commit = self._convert_git_commit(git_commit)
                 commits.append(commit)
+                
+                # Call progress callback if provided
+                if progress_callback and total_commits:
+                    progress = (i + 1) / total_commits
+                    progress_callback(progress)
                 
             logger.info(f"Extracted {len(commits)} commits from branch '{branch}'")
             return commits

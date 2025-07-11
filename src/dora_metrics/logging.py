@@ -26,6 +26,9 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
     logging.getLogger("git").setLevel(logging.WARNING)
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("gql").setLevel(logging.WARNING)
+    logging.getLogger("gql.transport").setLevel(logging.WARNING)
+    logging.getLogger("gql.transport.requests").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:

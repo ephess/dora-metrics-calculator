@@ -296,20 +296,14 @@ class TestDataQualityValidator:
         
         report = validator.validate(commits, prs, [])
         
-        assert report.prs_with_commits == 1
-        assert report.prs_without_commits == 1
-        assert report.pr_completeness_rate == 0.5
-        assert len(report.orphaned_prs) == 1
-        assert report.orphaned_prs[0]["pr_number"] == 2
-        assert "missing_commit" in report.orphaned_prs[0]["missing_shas"]
-        assert report.has_critical_issues()  # PRs with missing commits is now CRITICAL
+        # We no longer validate PR-to-commit references
+        assert report.prs_with_commits == 2  # All PRs are counted as having commits
+        assert report.prs_without_commits == 0
+        assert report.pr_completeness_rate == 1.0
+        assert len(report.orphaned_prs) == 0
+        assert not report.has_critical_issues()
         assert not report.has_warnings()
-        assert report.data_quality_score < 0.6  # Significant penalty for critical issue
-        
-        # Check critical issues
-        pr_critical = [i for i in report.critical_issues if i['type'] == 'pr_missing_reference']
-        assert len(pr_critical) == 2  # Two missing commits
-        assert all(i['pr_number'] == 2 for i in pr_critical)
+        assert report.data_quality_score == 1.0  # No issues found
     
     def test_deployments_with_missing_commits(self, validator, base_date):
         """Test validation with deployments referencing non-existent commits (critical)."""
@@ -555,12 +549,12 @@ class TestDataQualityValidator:
         assert "SUMMARY" in full_report
         assert "Total commits:      2" in full_report
         assert "Total PRs:          2" in full_report
-        assert "CRITICAL ISSUES" in full_report  # Now critical, not warning
-        assert "1 PRs with Missing References:" in full_report
-        assert "PR #2 'PR with missing commit': missing commits" in full_report
+        # We no longer validate PR-to-commit references, so no critical issues
+        assert "CRITICAL ISSUES" not in full_report
         assert "INFORMATIONAL" in full_report
         assert "PR Process Coverage: 50%" in full_report
-        assert "RECOMMENDATIONS" in full_report
+        # Recommendations should still be there for PR coverage
+        assert "Consider enforcing PR-based workflow" in full_report
     
     def test_quality_score_calculation(self, validator, base_date):
         """Test data quality score calculation."""

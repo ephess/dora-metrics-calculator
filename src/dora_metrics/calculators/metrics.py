@@ -3,7 +3,7 @@
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -695,3 +695,80 @@ class MetricsCalculator:
         else:
             # Manual deployment from commit
             return getattr(deployment, "manual_deployment_failed", False) is True
+    
+    def calculate_daily_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate daily DORA metrics."""
+        # Default to last 30 days if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=30)
+        
+        config = MetricsConfig(reporting_period=Period.DAILY)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by date string
+        result = {}
+        for m in metrics_list:
+            # Format period as YYYY-MM-DD for daily
+            period_key = m.period_start.strftime("%Y-%m-%d")
+            result[period_key] = m
+        return result
+    
+    def calculate_weekly_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate weekly DORA metrics."""
+        # Default to last 90 days if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=90)
+        
+        config = MetricsConfig(reporting_period=Period.WEEKLY)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by week string
+        result = {}
+        for m in metrics_list:
+            # Format period as Week YYYY-WW
+            week_num = m.period_start.isocalendar()[1]
+            year = m.period_start.year
+            period_key = f"{year}-W{week_num:02d}"
+            result[period_key] = m
+        return result
+    
+    def calculate_monthly_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate monthly DORA metrics."""
+        # Default to last 365 days if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=365)
+        
+        config = MetricsConfig(reporting_period=Period.MONTHLY)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by month string  
+        result = {}
+        for m in metrics_list:
+            # Format period as YYYY-MM
+            period_key = m.period_start.strftime("%Y-%m")
+            result[period_key] = m
+        return result

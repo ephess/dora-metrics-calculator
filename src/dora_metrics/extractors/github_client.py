@@ -43,6 +43,7 @@ class GitHubGraphQLClient:
         until: Optional[datetime] = None,
         state: Optional[str] = None,
         max_results: Optional[int] = None,
+        callback: Optional[callable] = None,
     ) -> List[PullRequest]:
         """
         Fetch pull requests from GitHub.
@@ -52,6 +53,7 @@ class GitHubGraphQLClient:
             until: End date for filtering PRs
             state: PR state filter (OPEN, CLOSED, MERGED)
             max_results: Maximum number of PRs to return
+            callback: Optional callback function(pr_batch, total_fetched, estimated_total)
             
         Returns:
             List of PullRequest objects
@@ -111,6 +113,7 @@ class GitHubGraphQLClient:
         # Fetch all pages
         all_prs = []
         cursor = None
+        page_count = 0
         
         while True:
             variables = {
@@ -125,6 +128,8 @@ class GitHubGraphQLClient:
             
             # Process results
             pr_nodes = result["repository"]["pullRequests"]["nodes"]
+            page_prs = []
+            
             for pr_data in pr_nodes:
                 pr = self._parse_pull_request(pr_data)
                 
@@ -135,11 +140,21 @@ class GitHubGraphQLClient:
                     continue
                     
                 all_prs.append(pr)
+                page_prs.append(pr)
                 
                 # Check if we've hit the max results limit
                 if max_results and len(all_prs) >= max_results:
                     logger.info(f"Reached max_results limit of {max_results}")
+                    if callback and page_prs:
+                        callback(page_prs, len(all_prs), max_results)
                     return all_prs[:max_results]
+            
+            # Call callback with this page's results
+            page_count += 1
+            if callback and page_prs:
+                # Estimate total based on pages so far (rough estimate)
+                estimated_total = len(all_prs) * 2 if page_count == 1 else None
+                callback(page_prs, len(all_prs), estimated_total)
             
             # Check for more pages
             page_info = result["repository"]["pullRequests"]["pageInfo"]

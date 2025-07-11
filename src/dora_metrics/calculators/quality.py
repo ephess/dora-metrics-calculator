@@ -262,6 +262,9 @@ class DataQualityValidator:
         # Generate recommendations
         self._generate_recommendations(report)
         
+        # Standardize issue format for CLI display
+        self._standardize_issue_format(report)
+        
         return report
     
     def _check_pr_associations(
@@ -297,38 +300,14 @@ class DataQualityValidator:
                     'commits_with_prs': report.commits_with_prs,
                 })
         
-        # Check PRs that reference missing commits (critical level)
-        orphaned_prs = []
-        for pr in prs:
-            has_all_commits = True
-            missing_shas = []
-            
-            for commit_sha in pr.commits:
-                if commit_sha not in commits_by_sha:
-                    has_all_commits = False
-                    missing_shas.append(commit_sha)
-            
-            if has_all_commits:
-                report.prs_with_commits += 1
-            else:
-                report.prs_without_commits += 1
-                orphaned_prs.append({
-                    "pr_number": pr.number,
-                    "pr_title": pr.title,
-                    "missing_shas": missing_shas,
-                })
-                # This is CRITICAL - PRs must reference valid commits
-                for sha in missing_shas:
-                    report.critical_issues.append({
-                        "type": "pr_missing_reference",
-                        "pr_number": pr.number,
-                        "pr_title": pr.title,
-                        "missing_sha": sha,
-                    })
-        
-        report.orphaned_prs = orphaned_prs
-        if report.total_prs > 0:
-            report.pr_completeness_rate = report.prs_with_commits / report.total_prs
+        # We don't validate PR-to-commit references because:
+        # 1. When branches are deleted, their commits disappear from git history
+        # 2. This is normal behavior and not actionable
+        # So we just count PRs
+        report.prs_with_commits = len(prs)
+        report.prs_without_commits = 0
+        report.orphaned_prs = []
+        report.pr_completeness_rate = 1.0
     
     def _check_deployment_associations(
         self,
@@ -423,12 +402,39 @@ class DataQualityValidator:
         
         return max(0.0, min(1.0, score))
     
+    def _standardize_issue_format(self, report: DataQualityReport) -> None:
+        """Ensure all issues have a consistent format with 'message' field."""
+        # Process critical issues
+        for issue in report.critical_issues:
+            if 'message' not in issue:
+                if issue['type'] == 'temporal':
+                    issue['message'] = f"Deployment {issue['deployment']} appears to happen before commit {issue['commit_sha'][:8]} (time diff: {issue['time_difference_hours']:.1f} hours)"
+                elif issue['type'] == 'missing_reference':
+                    issue['message'] = f"Deployment {issue['deployment']} references non-existent commit {issue['missing_sha'][:8]}"
+                else:
+                    issue['message'] = f"Unknown critical issue type: {issue['type']}"
+        
+        # Process warnings
+        for warning in report.warnings:
+            if 'message' not in warning:
+                if warning['type'] == 'low_pr_coverage':
+                    warning['message'] = f"Low PR coverage: only {warning['coverage']:.1%} of commits went through PRs ({warning['commits_without_prs']} commits without PRs)"
+                else:
+                    warning['message'] = f"Unknown warning type: {warning['type']}"
+        
+        # Process informational
+        for info in report.informational:
+            if 'message' not in info:
+                if info['type'] == 'pr_coverage':
+                    info['message'] = f"PR coverage: {info['coverage']:.1%} of commits went through PRs ({info['commits_with_prs']} with PRs, {info['commits_without_prs']} without)"
+                else:
+                    info['message'] = f"Unknown info type: {info['type']}"
+    
     def _generate_recommendations(self, report: DataQualityReport) -> None:
         """Generate actionable recommendations based on findings."""
         # Critical issues
         temporal_issues = len([i for i in report.critical_issues if i['type'] == 'temporal'])
         missing_deploy_refs = len([i for i in report.critical_issues if i['type'] == 'missing_reference'])
-        missing_pr_refs = len([i for i in report.critical_issues if i['type'] == 'pr_missing_reference'])
         
         if temporal_issues:
             report.recommendations.append(
@@ -438,11 +444,6 @@ class DataQualityValidator:
         if missing_deploy_refs:
             report.recommendations.append(
                 "Ensure all deployments reference valid commit SHAs - some deployments point to non-existent commits"
-            )
-        
-        if missing_pr_refs:
-            report.recommendations.append(
-                "Some PRs reference commits that aren't in the dataset - ensure full git history is available when extracting commits"
             )
         
         # Warnings

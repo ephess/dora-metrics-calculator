@@ -150,7 +150,7 @@ class TestCLI:
             assert "Extracting releases" in result.output
             
             # Verify calls
-            mock_client.assert_called_once_with('test-token')
+            mock_client.assert_called_once_with('test-token', 'test-owner', 'test-repo')
     
     def test_associate(self, runner, mock_storage_manager, sample_commits, sample_prs, sample_deployments):
         """Test associate command."""
@@ -163,8 +163,8 @@ class TestCLI:
             mock_repo.load_deployments.return_value = sample_deployments
             
             mock_assoc_instance = mock_associator.return_value
-            mock_assoc_instance.associate_commits_with_prs.return_value = sample_commits
-            mock_assoc_instance.identify_deployment_commits.return_value = sample_commits
+            # The associate_data method returns (commits, prs)
+            mock_assoc_instance.associate_data.return_value = (sample_commits, sample_prs)
             
             # Run command
             result = runner.invoke(cli, ['associate', '--repo', 'test-repo'])
@@ -315,11 +315,7 @@ class TestCLI:
             mock_metrics.lead_time_p90 = 20.0
             mock_metrics.deployment_frequency = 2.0
             mock_metrics.change_failure_rate = 0.1
-            mock_metrics.mttr_hours = 2.5
-            mock_metrics.lead_time_performance = "ELITE"
-            mock_metrics.deployment_frequency_performance = "HIGH"
-            mock_metrics.change_failure_rate_performance = "ELITE"
-            mock_metrics.mttr_performance = "ELITE"
+            mock_metrics.mean_time_to_restore = 2.5
             
             mock_calc_instance = mock_calculator.return_value
             mock_calc_instance.calculate_weekly_metrics.return_value = {
@@ -340,7 +336,7 @@ class TestCLI:
             assert "10.5h" in result.output  # Lead time p50
             assert "2.0/day" in result.output  # Deploy frequency
             assert "Performance Level" in result.output
-            assert "ELITE" in result.output
+            assert "Elite" in result.output
     
     def test_validate(self, runner, mock_storage_manager, sample_commits, sample_prs):
         """Test validate command."""
