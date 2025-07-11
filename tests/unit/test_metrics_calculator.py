@@ -259,7 +259,7 @@ class TestMetricsCalculator:
             datetime(2024, 1, 9, tzinfo=timezone.utc)
         )
         
-        mttr, restorations = calculator._calculate_mttr(
+        mttr, restorations, mttr_stats = calculator._calculate_mttr(
             deployments,
             datetime(2024, 1, 1, tzinfo=timezone.utc),
             datetime(2024, 1, 9, tzinfo=timezone.utc)
@@ -268,12 +268,13 @@ class TestMetricsCalculator:
         # Failure at hour 2, resolved at hour 6 = 4 hours
         assert mttr == 4.0
         assert restorations == 1
+        assert mttr_stats['p50'] == 4.0  # Only one data point
         
     def test_no_deployments(self, calculator):
         """Test metrics when there are no deployments."""
         deployments = []
         
-        lead_time, _ = calculator._calculate_lead_time(deployments, None, None)
+        lead_time, _, _ = calculator._calculate_lead_time(deployments, None, None)
         assert lead_time is None
         
         freq, count = calculator._calculate_deployment_frequency(
@@ -287,7 +288,7 @@ class TestMetricsCalculator:
         rate, _ = calculator._calculate_change_failure_rate(deployments, None, None)
         assert rate is None
         
-        mttr, _ = calculator._calculate_mttr(deployments, None, None)
+        mttr, _, _ = calculator._calculate_mttr(deployments, None, None)
         assert mttr is None
         
     def test_manual_deployments(self, calculator, sample_manual_deployments):
@@ -507,3 +508,78 @@ class TestMetricsCalculator:
         # Also check that we counted all commits
         assert day3_metrics.lead_time_data_points == 3, \
             f"Expected 3 data points (all commits since v1.0.0), got {day3_metrics.lead_time_data_points}"
+    
+    def test_lead_time_percentiles(self, calculator):
+        """
+        Test that lead time calculation includes percentile statistics.
+        """
+        base_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        
+        # Create commits with varying ages
+        commits = []
+        
+        # Create commits at different times to create varying lead times
+        # When deployed together, they'll have lead times of: 1, 2, 3, 4, 5, 10, 20, 30, 40, 100 hours
+        hours_before_deploy = [1, 2, 3, 4, 5, 10, 20, 30, 40, 100]
+        deploy_time = base_date + timedelta(days=5)  # Deploy on day 5
+        
+        for i, hours in enumerate(hours_before_deploy):
+            commit = Commit(
+                sha=f"commit_{i}",
+                author_name="Dev",
+                author_email="dev@example.com",
+                authored_date=deploy_time - timedelta(hours=hours),
+                committer_name="Dev",
+                committer_email="dev@example.com",
+                committed_date=deploy_time - timedelta(hours=hours),
+                message=f"Commit {i} - {hours}h before deploy",
+                files_changed=[f"file{i}.py"],
+                additions=10,
+                deletions=5,
+            )
+            commits.append(commit)
+        
+        # Single deployment that includes all commits
+        deployment = Deployment(
+            tag_name="v2.0.0",
+            name="Big Release with Statistics",
+            created_at=deploy_time,
+            published_at=deploy_time,
+            commit_sha="commit_9",  # The last commit (oldest, 100h lead time)
+            is_prerelease=False,
+        )
+        
+        # Calculate metrics
+        config = MetricsConfig.daily_all()
+        results = calculator.calculate(
+            commits,
+            [],
+            [deployment],
+            base_date,
+            base_date + timedelta(days=6),
+            config
+        )
+        
+        # Get the deployment day metrics
+        day_metrics = results[5]  # Day 5 when deployment happened
+        
+        # Verify we have all the commits
+        assert day_metrics.lead_time_data_points == 10
+        
+        # Check the median (p50)
+        assert day_metrics.lead_time_for_changes == 7.5  # Median of [1,2,3,4,5,10,20,30,40,100]
+        assert day_metrics.lead_time_p50 == 7.5
+        
+        # Check percentiles (using approx for floating point)
+        assert abs(day_metrics.lead_time_p90 - 46.0) < 0.1  # 90th percentile
+        assert abs(day_metrics.lead_time_p95 - 73.0) < 0.1  # 95th percentile
+        
+        # Check mean is affected by the outlier
+        assert day_metrics.lead_time_mean == 21.5  # Mean of all values
+        
+        # Check standard deviation is high due to outlier
+        assert day_metrics.lead_time_std_dev > 28  # High variation
+        
+        # Check min/max
+        assert day_metrics.lead_time_min == 1.0
+        assert day_metrics.lead_time_max == 100.0

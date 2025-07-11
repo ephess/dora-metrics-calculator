@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
+
 from ..logging import get_logger
 from ..models import Commit, Deployment, PullRequest
 
@@ -97,7 +99,7 @@ class MetricsConfig:
 @dataclass
 class DORAMetrics:
     """Container for DORA metrics results."""
-    lead_time_for_changes: Optional[float]  # Hours
+    lead_time_for_changes: Optional[float]  # Hours (median)
     deployment_frequency: Optional[float]  # Deployments per day
     change_failure_rate: Optional[float]  # Percentage
     mean_time_to_restore: Optional[float]  # Hours
@@ -112,12 +114,30 @@ class DORAMetrics:
     failed_deployment_count: int = 0
     mttr_data_points: int = 0
     
+    # Statistical enhancements for lead time
+    lead_time_p50: Optional[float] = None  # 50th percentile (median)
+    lead_time_p90: Optional[float] = None  # 90th percentile
+    lead_time_p95: Optional[float] = None  # 95th percentile
+    lead_time_mean: Optional[float] = None  # Mean (shows impact of outliers)
+    lead_time_std_dev: Optional[float] = None  # Standard deviation
+    lead_time_min: Optional[float] = None  # Minimum (fastest)
+    lead_time_max: Optional[float] = None  # Maximum (slowest - important!)
+    
+    # Statistical enhancements for MTTR
+    mttr_p50: Optional[float] = None  # 50th percentile (median)
+    mttr_p90: Optional[float] = None  # 90th percentile
+    mttr_p95: Optional[float] = None  # 95th percentile
+    mttr_mean: Optional[float] = None  # Mean
+    mttr_std_dev: Optional[float] = None  # Standard deviation
+    mttr_min: Optional[float] = None  # Fastest recovery
+    mttr_max: Optional[float] = None  # Slowest recovery (critical!)
+    
     # Configuration used
     config: Optional[MetricsConfig] = None
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "period_start": self.period_start.isoformat(),
             "period_end": self.period_end.isoformat(),
             "metrics": {
@@ -132,7 +152,35 @@ class DORAMetrics:
                 "failed_deployment_count": self.failed_deployment_count,
                 "mttr_data_points": self.mttr_data_points,
             },
-            "config": {
+        }
+        
+        # Add lead time statistics if available
+        if self.lead_time_data_points > 0:
+            result["lead_time_statistics"] = {
+                "p50": self.lead_time_p50,
+                "p90": self.lead_time_p90,
+                "p95": self.lead_time_p95,
+                "mean": self.lead_time_mean,
+                "std_dev": self.lead_time_std_dev,
+                "min": self.lead_time_min,
+                "max": self.lead_time_max,
+            }
+        
+        # Add MTTR statistics if available
+        if self.mttr_data_points > 0:
+            result["mttr_statistics"] = {
+                "p50": self.mttr_p50,
+                "p90": self.mttr_p90,
+                "p95": self.mttr_p95,
+                "mean": self.mttr_mean,
+                "std_dev": self.mttr_std_dev,
+                "min": self.mttr_min,
+                "max": self.mttr_max,
+            }
+        
+        # Add config section if available
+        if self.config:
+            result["config"] = {
                 "lead_time": {
                     "period": self.config.lead_time.period.value,
                     "method": self.config.lead_time.method.value,
@@ -150,8 +198,9 @@ class DORAMetrics:
                     "method": self.config.mttr.method.value,
                 },
                 "reporting_period": self.config.reporting_period.value,
-            } if self.config else None,
-        }
+            }
+        
+        return result
         
     def to_json(self) -> str:
         """Convert to JSON string."""
@@ -284,24 +333,34 @@ class MetricsCalculator:
         config: MetricsConfig
     ) -> DORAMetrics:
         """Calculate metrics for a single reporting period using configured methods."""
-        # Calculate each metric with its own configuration
-        lead_time, lt_points = self._calculate_metric(
-            period_start, period_end, config.lead_time, self._calculate_lead_time
+        # Calculate lead time with statistics
+        deployments = self._get_deployments_for_metric(
+            period_start, period_end, config.lead_time
+        )
+        lead_time, lt_points, lt_stats = self._calculate_lead_time(
+            deployments, period_start, period_end
         )
         
+        # Calculate deployment frequency
         deploy_freq, deploy_count = self._calculate_metric(
             period_start, period_end, config.deployment_frequency, self._calculate_deployment_frequency
         )
         
+        # Calculate failure rate
         failure_rate, failed_count = self._calculate_metric(
             period_start, period_end, config.change_failure_rate, self._calculate_change_failure_rate
         )
         
-        mttr, mttr_points = self._calculate_metric(
-            period_start, period_end, config.mttr, self._calculate_mttr
+        # Calculate MTTR with statistics
+        deployments = self._get_deployments_for_metric(
+            period_start, period_end, config.mttr
+        )
+        mttr, mttr_points, mttr_stats = self._calculate_mttr(
+            deployments, period_start, period_end
         )
         
-        return DORAMetrics(
+        # Create metrics object
+        metrics = DORAMetrics(
             lead_time_for_changes=lead_time,
             deployment_frequency=deploy_freq,
             change_failure_rate=failure_rate,
@@ -315,19 +374,35 @@ class MetricsCalculator:
             config=config,
         )
         
-    def _calculate_metric(
+        # Add lead time statistics if available
+        if lt_stats:
+            metrics.lead_time_p50 = lt_stats.get('p50')
+            metrics.lead_time_p90 = lt_stats.get('p90')
+            metrics.lead_time_p95 = lt_stats.get('p95')
+            metrics.lead_time_mean = lt_stats.get('mean')
+            metrics.lead_time_std_dev = lt_stats.get('std_dev')
+            metrics.lead_time_min = lt_stats.get('min')
+            metrics.lead_time_max = lt_stats.get('max')
+        
+        # Add MTTR statistics if available
+        if mttr_stats:
+            metrics.mttr_p50 = mttr_stats.get('p50')
+            metrics.mttr_p90 = mttr_stats.get('p90')
+            metrics.mttr_p95 = mttr_stats.get('p95')
+            metrics.mttr_mean = mttr_stats.get('mean')
+            metrics.mttr_std_dev = mttr_stats.get('std_dev')
+            metrics.mttr_min = mttr_stats.get('min')
+            metrics.mttr_max = mttr_stats.get('max')
+        
+        return metrics
+        
+    def _get_deployments_for_metric(
         self,
         period_start: datetime,
         period_end: datetime,
-        metric_config: MetricConfig,
-        calculation_func
-    ) -> Tuple[Optional[float], int]:
-        """
-        Calculate a single metric using its configuration.
-        
-        Returns:
-            Tuple of (metric_value, data_point_count)
-        """
+        metric_config: MetricConfig
+    ) -> List[Tuple[datetime, Commit, Optional[Deployment]]]:
+        """Get deployments for a specific metric based on its configuration."""
         # Determine the data window based on configuration
         if metric_config.method == CalculationMethod.ROLLING_WINDOW:
             window_days = metric_config.get_window_days()
@@ -341,10 +416,26 @@ class MetricsCalculator:
             data_start = period_start
             
         # Get deployments in the data window
-        deployments = self._get_deployments_in_period(data_start, period_end)
+        return self._get_deployments_in_period(data_start, period_end)
+    
+    def _calculate_metric(
+        self,
+        period_start: datetime,
+        period_end: datetime,
+        metric_config: MetricConfig,
+        calculation_func
+    ) -> Tuple[Optional[float], int]:
+        """
+        Calculate a single metric using its configuration.
+        
+        Returns:
+            Tuple of (metric_value, data_point_count)
+        """
+        # Get deployments for this metric
+        deployments = self._get_deployments_for_metric(period_start, period_end, metric_config)
         
         # Calculate the metric
-        return calculation_func(deployments, data_start, period_end)
+        return calculation_func(deployments, period_start, period_end)
         
     def _get_deployments_in_period(
         self,
@@ -404,17 +495,17 @@ class MetricsCalculator:
         deployments: List[Tuple[datetime, Commit, Optional[Deployment]]],
         start_date: datetime,
         end_date: datetime
-    ) -> Tuple[Optional[float], int]:
+    ) -> Tuple[Optional[float], int, Dict[str, Optional[float]]]:
         """
-        Calculate lead time for changes in hours.
+        Calculate lead time for changes in hours with full statistics.
         
         Lead time is measured from commit authored date to deployment time.
         
         Returns:
-            Tuple of (median_lead_time_hours, number_of_data_points)
+            Tuple of (median_lead_time_hours, number_of_data_points, statistics_dict)
         """
         if not deployments:
-            return None, 0
+            return None, 0, {}
             
         lead_times = []
         
@@ -432,17 +523,21 @@ class MetricsCalculator:
                     lead_times.append(lead_time)
                     
         if not lead_times:
-            return None, 0
+            return None, 0, {}
             
-        # Return median lead time
-        lead_times.sort()
-        n = len(lead_times)
-        if n % 2 == 0:
-            median = (lead_times[n//2 - 1] + lead_times[n//2]) / 2
-        else:
-            median = lead_times[n//2]
+        # Calculate comprehensive statistics
+        lead_times_array = np.array(lead_times)
+        statistics = {
+            'p50': np.percentile(lead_times_array, 50),
+            'p90': np.percentile(lead_times_array, 90),
+            'p95': np.percentile(lead_times_array, 95),
+            'mean': np.mean(lead_times_array),
+            'std_dev': np.std(lead_times_array) if len(lead_times) > 1 else 0.0,
+            'min': np.min(lead_times_array),
+            'max': np.max(lead_times_array),
+        }
             
-        return median, n
+        return statistics['p50'], len(lead_times), statistics
         
     def _calculate_deployment_frequency(
         self,
@@ -499,14 +594,14 @@ class MetricsCalculator:
         deployments: List[Tuple[datetime, Commit, Optional[Deployment]]],
         start_date: datetime,
         end_date: datetime
-    ) -> Tuple[Optional[float], int]:
+    ) -> Tuple[Optional[float], int, Dict[str, Optional[float]]]:
         """
-        Calculate mean time to restore in hours.
+        Calculate mean time to restore in hours with full statistics.
         
-        MTTR = average time from failure to resolution
+        MTTR = time from failure to resolution
         
         Returns:
-            Tuple of (mean_restore_time_hours, number_of_restorations)
+            Tuple of (median_restore_time_hours, number_of_restorations, statistics_dict)
         """
         restore_times = []
         
@@ -523,9 +618,21 @@ class MetricsCalculator:
                 pass
                 
         if not restore_times:
-            return None, 0
+            return None, 0, {}
             
-        return sum(restore_times) / len(restore_times), len(restore_times)
+        # Calculate comprehensive statistics
+        restore_times_array = np.array(restore_times)
+        statistics = {
+            'p50': np.percentile(restore_times_array, 50),
+            'p90': np.percentile(restore_times_array, 90),
+            'p95': np.percentile(restore_times_array, 95),
+            'mean': np.mean(restore_times_array),
+            'std_dev': np.std(restore_times_array) if len(restore_times) > 1 else 0.0,
+            'min': np.min(restore_times_array),
+            'max': np.max(restore_times_array),
+        }
+            
+        return statistics['p50'], len(restore_times), statistics
         
     def _get_commits_in_deployment(
         self,
@@ -565,17 +672,17 @@ class MetricsCalculator:
         
         # Get all commits between previous deployment and this one
         if prev_deployment:
-            # Find commits after previous deployment and up to current deployment
+            # Find commits after previous deployment and up to current deployment time
             for commit in self.commits_ordered:
                 # Include commits authored after the previous deployment
-                # and up to (and including) the current deployment commit
+                # and before or at the deployment time
                 if (commit.authored_date > prev_deploy_time and 
-                    commit.authored_date <= deployment_commit.authored_date):
+                    commit.authored_date <= deploy_time):
                     commits.append(commit)
         else:
-            # First deployment - include all commits up to deployment
+            # First deployment - include all commits up to deployment time
             for commit in self.commits_ordered:
-                if commit.authored_date <= deployment_commit.authored_date:
+                if commit.authored_date <= deploy_time:
                     commits.append(commit)
         
         return commits

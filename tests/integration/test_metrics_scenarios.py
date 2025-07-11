@@ -155,84 +155,104 @@ class TestMetricsScenarios:
     def test_improving_team_trend(self):
         """Test metrics showing team improvement over time."""
         calculator = MetricsCalculator()
-        base_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        base_date = datetime(2024, 1, 1, tzinfo=timezone.utc)  # Monday
         
         commits = []
         deployments = []
         
-        # Create improving metrics over 3 months
-        for month in range(3):
-            month_start = base_date + timedelta(days=month * 30)
+        # Generate 12 weeks of data with improving metrics
+        # Week 1-4: 1 deploy/week, 48h lead time, 30% failure rate
+        # Week 5-8: 2 deploys/week, 24h lead time, 20% failure rate  
+        # Week 9-12: 3 deploys/week, 16h lead time, 10% failure rate
+        
+        for week in range(12):
+            # Determine the improvement phase (0, 1, or 2)
+            phase = week // 4
             
-            # Increasing deployment frequency each month
-            deploys_per_week = month + 1
+            # Increasing deployment frequency each phase
+            deploys_this_week = phase + 1
             
-            for week in range(4):
-                for deploy in range(deploys_per_week):
-                    commit_time = month_start + timedelta(weeks=week, days=deploy)
-                    # Decreasing lead time each month
-                    lead_time_hours = 48 / (month + 1)
-                    deploy_time = commit_time + timedelta(hours=lead_time_hours)
+            # Decreasing lead time each phase
+            lead_time_hours = 48 / (phase + 1)
+            
+            # Decreasing failure rate each phase
+            failure_rate = 0.3 - (phase * 0.1)
+            
+            week_start = base_date + timedelta(weeks=week)
+            
+            for deploy_num in range(deploys_this_week):
+                # Spread deployments through the week
+                days_offset = deploy_num * (5 / deploys_this_week)  # Spread over work week
+                commit_time = week_start + timedelta(days=days_offset)
+                deploy_time = commit_time + timedelta(hours=lead_time_hours)
+                
+                commit = Commit(
+                    sha=f"commit_w{week}_d{deploy_num}",
+                    author_name="Dev",
+                    author_email="dev@example.com",
+                    authored_date=commit_time,
+                    committer_name="Dev",
+                    committer_email="dev@example.com",
+                    committed_date=commit_time,
+                    message=f"Week {week} deploy {deploy_num}",
+                    files_changed=["app.py"],
+                    additions=30,
+                    deletions=10,
+                )
+                commits.append(commit)
+                
+                deployment = Deployment(
+                    tag_name=f"v{week}.{deploy_num}",
+                    name=f"Week {week} deployment {deploy_num}",
+                    created_at=deploy_time,
+                    published_at=deploy_time,
+                    commit_sha=commit.sha,
+                    is_prerelease=False,
+                )
+                
+                # Apply failure rate
+                if deploy_num == 0 and week % int(1/failure_rate) == 0:
+                    deployment.deployment_failed = True
+                    # Improving MTTR each phase
+                    mttr_hours = 24 / (phase + 1)
+                    deployment.failure_resolved_at = deploy_time + timedelta(hours=mttr_hours)
                     
-                    commit = Commit(
-                        sha=f"commit_m{month}_w{week}_d{deploy}",
-                        author_name="Dev",
-                        author_email="dev@example.com",
-                        authored_date=commit_time,
-                        committer_name="Dev",
-                        committer_email="dev@example.com",
-                        committed_date=commit_time,
-                        message=f"Deploy {month}-{week}-{deploy}",
-                        files_changed=["app.py"],
-                        additions=30,
-                        deletions=10,
-                    )
-                    commits.append(commit)
+                deployments.append(deployment)
                     
-                    deployment = Deployment(
-                        tag_name=f"v{month}.{week}.{deploy}",
-                        name=f"Deploy {month}-{week}-{deploy}",
-                        created_at=deploy_time,
-                        published_at=deploy_time,
-                        commit_sha=commit.sha,
-                        is_prerelease=False,
-                    )
-                    
-                    # Decreasing failure rate each month
-                    failure_rate = 0.3 - (month * 0.1)  # 30%, 20%, 10%
-                    if (week * deploys_per_week + deploy) % int(1/failure_rate) == 0:
-                        deployment.deployment_failed = True
-                        # Improving MTTR each month
-                        mttr_hours = 24 / (month + 1)
-                        deployment.failure_resolved_at = deploy_time + timedelta(hours=mttr_hours)
-                        
-                    deployments.append(deployment)
-                    
-        # Calculate monthly metrics
+        # Calculate monthly metrics over the 12 weeks
         config = MetricsConfig(reporting_period=Period.MONTHLY)
         results = calculator.calculate(
             commits, [], deployments,
             base_date,
-            base_date + timedelta(days=90),
+            base_date + timedelta(weeks=12),
             config
         )
         
         assert len(results) == 3  # Three months
         
         # Verify improving trends
-        # Deployment frequency increases
+        # Month 0: weeks 1-4 (phase 0)
+        # Month 1: weeks 5-8 (phase 1) 
+        # Month 2: weeks 9-12 (phase 2)
+        
+        # Deployment frequency increases (1/week -> 2/week -> 3/week)
         assert results[0].deployment_frequency < results[1].deployment_frequency
         assert results[1].deployment_frequency < results[2].deployment_frequency
         
-        # Lead time decreases
+        # Lead time decreases (48h -> 24h -> 16h)
         assert results[0].lead_time_for_changes > results[1].lead_time_for_changes
         assert results[1].lead_time_for_changes > results[2].lead_time_for_changes
         
-        # Failure rate decreases
+        # Verify approximate values
+        assert 40 < results[0].lead_time_for_changes < 50  # ~48h
+        assert 20 < results[1].lead_time_for_changes < 30  # ~24h  
+        assert 10 < results[2].lead_time_for_changes < 20  # ~16h
+        
+        # Failure rate decreases (30% -> 20% -> 10%)
         assert results[0].change_failure_rate > results[1].change_failure_rate
         assert results[1].change_failure_rate > results[2].change_failure_rate
         
-        # MTTR decreases
+        # MTTR decreases (24h -> 12h -> 8h)
         assert results[0].mean_time_to_restore > results[1].mean_time_to_restore
         assert results[1].mean_time_to_restore > results[2].mean_time_to_restore
         
