@@ -11,6 +11,7 @@ import numpy as np
 
 from ..logging import get_logger
 from ..models import Commit, Deployment, PullRequest
+from .quality import DataQualityValidator
 
 logger = get_logger(__name__)
 
