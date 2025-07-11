@@ -286,9 +286,16 @@ class MetricsCalculator:
         period: Period
     ) -> List[Tuple[datetime, datetime]]:
         """Get list of period start/end dates."""
-        if period in (Period.ROLLING_7_DAYS, Period.ROLLING_30_DAYS, Period.ROLLING_90_DAYS):
-            # For rolling windows, still create daily periods for reporting
+        # Map rolling windows to appropriate reporting periods
+        if period == Period.ROLLING_7_DAYS:
+            # 7-day rolling window: report daily
             period = Period.DAILY
+        elif period == Period.ROLLING_30_DAYS:
+            # 30-day rolling window: report weekly
+            period = Period.WEEKLY
+        elif period == Period.ROLLING_90_DAYS:
+            # 90-day rolling window: report weekly
+            period = Period.WEEKLY
             
         periods = []
         current = start_date
@@ -838,13 +845,20 @@ class MetricsCalculator:
         if since is None:
             since = until - timedelta(days=30)
         
-        config = MetricsConfig(reporting_period=Period.ROLLING_7_DAYS)
+        # Configure with rolling window for all metrics
+        config = MetricsConfig(
+            lead_time=MetricConfig(Period.ROLLING_7_DAYS, CalculationMethod.ROLLING_WINDOW),
+            deployment_frequency=MetricConfig(Period.ROLLING_7_DAYS, CalculationMethod.ROLLING_WINDOW),
+            change_failure_rate=MetricConfig(Period.ROLLING_7_DAYS, CalculationMethod.ROLLING_WINDOW),
+            mttr=MetricConfig(Period.ROLLING_7_DAYS, CalculationMethod.ROLLING_WINDOW),
+            reporting_period=Period.ROLLING_7_DAYS
+        )
         metrics_list = self.calculate(commits, [], deployments, since, until, config)
         
         # Convert to dict keyed by date string  
         result = {}
         for m in metrics_list:
-            # Format period as YYYY-MM-DD
+            # Format period as YYYY-MM-DD (daily)
             period_key = m.period_start.strftime("%Y-%m-%d")
             result[period_key] = m
         return result
@@ -863,14 +877,23 @@ class MetricsCalculator:
         if since is None:
             since = until - timedelta(days=90)
         
-        config = MetricsConfig(reporting_period=Period.ROLLING_30_DAYS)
+        # Configure with rolling window for all metrics
+        config = MetricsConfig(
+            lead_time=MetricConfig(Period.ROLLING_30_DAYS, CalculationMethod.ROLLING_WINDOW),
+            deployment_frequency=MetricConfig(Period.ROLLING_30_DAYS, CalculationMethod.ROLLING_WINDOW),
+            change_failure_rate=MetricConfig(Period.ROLLING_30_DAYS, CalculationMethod.ROLLING_WINDOW),
+            mttr=MetricConfig(Period.ROLLING_30_DAYS, CalculationMethod.ROLLING_WINDOW),
+            reporting_period=Period.ROLLING_30_DAYS
+        )
         metrics_list = self.calculate(commits, [], deployments, since, until, config)
         
-        # Convert to dict keyed by date string  
+        # Convert to dict keyed by week string  
         result = {}
         for m in metrics_list:
-            # Format period as YYYY-MM-DD
-            period_key = m.period_start.strftime("%Y-%m-%d")
+            # Format period as Week YYYY-WW (weekly)
+            week_num = m.period_start.isocalendar()[1]
+            year = m.period_start.year
+            period_key = f"{year}-W{week_num:02d}"
             result[period_key] = m
         return result
     
@@ -888,13 +911,22 @@ class MetricsCalculator:
         if since is None:
             since = until - timedelta(days=180)
         
-        config = MetricsConfig(reporting_period=Period.ROLLING_90_DAYS)
+        # Configure with rolling window for all metrics
+        config = MetricsConfig(
+            lead_time=MetricConfig(Period.ROLLING_90_DAYS, CalculationMethod.ROLLING_WINDOW),
+            deployment_frequency=MetricConfig(Period.ROLLING_90_DAYS, CalculationMethod.ROLLING_WINDOW),
+            change_failure_rate=MetricConfig(Period.ROLLING_90_DAYS, CalculationMethod.ROLLING_WINDOW),
+            mttr=MetricConfig(Period.ROLLING_90_DAYS, CalculationMethod.ROLLING_WINDOW),
+            reporting_period=Period.ROLLING_90_DAYS
+        )
         metrics_list = self.calculate(commits, [], deployments, since, until, config)
         
-        # Convert to dict keyed by date string  
+        # Convert to dict keyed by week string  
         result = {}
         for m in metrics_list:
-            # Format period as YYYY-MM-DD
-            period_key = m.period_start.strftime("%Y-%m-%d")
+            # Format period as Week YYYY-WW (weekly)
+            week_num = m.period_start.isocalendar()[1]
+            year = m.period_start.year
+            period_key = f"{year}-W{week_num:02d}"
             result[period_key] = m
         return result

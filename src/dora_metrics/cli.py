@@ -280,8 +280,9 @@ def import_csv(ctx, repo: str, input: str):
 @click.option('--since', help='Start date (YYYY-MM-DD)')
 @click.option('--until', help='End date (YYYY-MM-DD)')
 @click.option('--output-format', type=click.Choice(['json', 'table']), default='table')
+@click.option('--detailed', is_flag=True, help='Show detailed statistics (p90, etc.)')
 @click.pass_context
-def calculate(ctx, repo: str, period: str, since: Optional[str], until: Optional[str], output_format: str):
+def calculate(ctx, repo: str, period: str, since: Optional[str], until: Optional[str], output_format: str, detailed: bool):
     """Calculate DORA metrics."""
     try:
         # Load data
@@ -337,12 +338,19 @@ def calculate(ctx, repo: str, period: str, since: Optional[str], until: Optional
             for period_key, period_metrics in metrics.items():
                 row = {
                     'Period': period_key,
-                    'Lead Time (p50)': f"{period_metrics.lead_time_p50:.1f}h" if period_metrics.lead_time_p50 else "N/A",
-                    'Lead Time (p90)': f"{period_metrics.lead_time_p90:.1f}h" if period_metrics.lead_time_p90 else "N/A",
-                    'Deploy Freq': f"{period_metrics.deployment_frequency:.1f}/day" if period_metrics.deployment_frequency else "N/A",
+                    'Lead Time': _format_lead_time(period_metrics.lead_time_for_changes),
+                    'Deploy Freq': _format_deployment_frequency(period_metrics.deployment_frequency),
                     'Change Failure %': f"{period_metrics.change_failure_rate:.1%}" if period_metrics.change_failure_rate is not None else "N/A",
-                    'MTTR': f"{period_metrics.mean_time_to_restore:.1f}h" if period_metrics.mean_time_to_restore else "N/A"
+                    'MTTR': _format_mttr(period_metrics.mean_time_to_restore)
                 }
+                
+                # Add detailed stats if requested
+                if detailed:
+                    row['Lead Time p90'] = _format_lead_time(period_metrics.lead_time_p90)
+                    row['Lead Time p95'] = _format_lead_time(period_metrics.lead_time_p95)
+                    row['Deploy Count'] = str(period_metrics.deployment_count) if period_metrics.deployment_count else "0"
+                    row['Failed Count'] = str(period_metrics.failed_deployment_count) if period_metrics.failed_deployment_count else "0"
+                
                 data.append(row)
             
             df = pd.DataFrame(data)
@@ -491,6 +499,72 @@ def update(ctx, repo: str, force: bool):
     except Exception as e:
         click.echo(f"✗ Error updating data: {e}", err=True)
         sys.exit(1)
+
+
+def _format_lead_time(hours: Optional[float]) -> str:
+    """Format lead time in a human-readable way."""
+    if hours is None:
+        return "N/A"
+    
+    if hours < 24:
+        # Less than a day - show in hours
+        return f"{hours:.1f}h"
+    elif hours < 24 * 7:
+        # Less than a week - show in days
+        days = hours / 24
+        return f"{days:.1f}d"
+    elif hours < 24 * 30:
+        # Less than a month - show in weeks
+        weeks = hours / (24 * 7)
+        return f"{weeks:.1f}w"
+    else:
+        # Show in months
+        months = hours / (24 * 30)
+        return f"{months:.1f}mo"
+
+
+def _format_deployment_frequency(freq_per_day: Optional[float]) -> str:
+    """Format deployment frequency in a human-readable way."""
+    if freq_per_day is None:
+        return "N/A"
+    
+    if freq_per_day >= 1:
+        # Multiple per day
+        return f"{freq_per_day:.1f}/day"
+    elif freq_per_day >= 1/7:
+        # Multiple per week
+        per_week = freq_per_day * 7
+        return f"{per_week:.1f}/week"
+    elif freq_per_day >= 1/30:
+        # Multiple per month
+        per_month = freq_per_day * 30
+        return f"{per_month:.1f}/month"
+    else:
+        # Less than monthly
+        per_month = freq_per_day * 30
+        return f"{per_month:.2f}/month"
+
+
+def _format_mttr(hours: Optional[float]) -> str:
+    """Format MTTR in a human-readable way."""
+    if hours is None:
+        return "N/A"
+    
+    if hours < 1:
+        # Less than an hour - show in minutes
+        minutes = hours * 60
+        return f"{minutes:.0f}m"
+    elif hours < 24:
+        # Less than a day - show in hours
+        return f"{hours:.1f}h"
+    elif hours < 24 * 7:
+        # Less than a week - show in days
+        days = hours / 24
+        return f"{days:.1f}d"
+    else:
+        # Show in weeks
+        weeks = hours / (24 * 7)
+        return f"{weeks:.1f}w"
 
 
 def _get_lead_time_level(lead_time_hours: Optional[float]) -> str:
