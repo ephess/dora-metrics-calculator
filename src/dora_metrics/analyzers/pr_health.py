@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
@@ -170,7 +170,7 @@ class PRHealthAnalyzer:
         Args:
             reference_time: Time to use as "now" for testing (defaults to current time)
         """
-        self.reference_time = reference_time or datetime.now()
+        self.reference_time = reference_time or datetime.now(timezone.utc)
     
     def analyze(self, pull_requests: List[PullRequest]) -> PRHealthReport:
         """
