@@ -451,3 +451,372 @@ class TestMetricsScenarios:
             assert week_metrics.lead_time_for_changes is None
             assert week_metrics.change_failure_rate is None
             assert week_metrics.mean_time_to_restore is None
+    
+    def test_hotfix_scenario(self):
+        """Test metrics for hotfix deployments with very short lead times."""
+        calculator = MetricsCalculator()
+        base_date = datetime(2024, 1, 1, 14, 0, tzinfo=timezone.utc)  # 2pm Monday
+        
+        commits = []
+        deployments = []
+        prs = []
+        
+        # Normal morning deployment
+        normal_commit = Commit(
+            sha="normal_deploy",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date - timedelta(days=2),  # Worked on Friday
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date - timedelta(days=2),
+            message="Feature: Add user dashboard",
+            files_changed=["dashboard.py"],
+            additions=200,
+            deletions=50,
+        )
+        normal_commit.pr_number = 100
+        commits.append(normal_commit)
+        
+        normal_pr = PullRequest(
+            number=100,
+            title="Add user dashboard",
+            state=PRState.MERGED,
+            created_at=base_date - timedelta(days=3),
+            updated_at=base_date - timedelta(days=2, hours=8),
+            closed_at=base_date - timedelta(days=2, hours=8),
+            merged_at=base_date - timedelta(days=2, hours=8),
+            merge_commit_sha="normal_deploy",
+            author="dev",
+            labels=["feature"],
+            commits=["normal_deploy"],
+        )
+        prs.append(normal_pr)
+        
+        normal_deployment = Deployment(
+            tag_name="v2.0.0",
+            name="Morning release",
+            created_at=base_date - timedelta(hours=6),  # 8am
+            published_at=base_date - timedelta(hours=6),
+            commit_sha="normal_deploy",
+            is_prerelease=False,
+        )
+        deployments.append(normal_deployment)
+        
+        # Production issue discovered at 2pm, hotfix cycle begins
+        
+        # Hotfix 1: Critical bug fix (30 minute turnaround)
+        hotfix1 = Commit(
+            sha="hotfix1",
+            author_name="SRE",
+            author_email="sre@example.com",
+            authored_date=base_date + timedelta(minutes=10),  # 2:10pm
+            committer_name="SRE",
+            committer_email="sre@example.com",
+            committed_date=base_date + timedelta(minutes=15),  # 2:15pm
+            message="HOTFIX: Fix null pointer in payment processing",
+            files_changed=["payment.py"],
+            additions=5,
+            deletions=2,
+        )
+        hotfix1.pr_number = 101
+        commits.append(hotfix1)
+        
+        hotfix1_pr = PullRequest(
+            number=101,
+            title="URGENT: Fix payment processing NPE",
+            state=PRState.MERGED,
+            created_at=base_date + timedelta(minutes=15),
+            updated_at=base_date + timedelta(minutes=25),
+            closed_at=base_date + timedelta(minutes=25),
+            merged_at=base_date + timedelta(minutes=25),  # 10 min review
+            merge_commit_sha="hotfix1",
+            author="sre",
+            labels=["hotfix", "critical", "production-issue"],
+            commits=["hotfix1"],
+        )
+        prs.append(hotfix1_pr)
+        
+        hotfix1_deployment = Deployment(
+            tag_name="v2.0.1",
+            name="Hotfix - Payment NPE",
+            created_at=base_date + timedelta(minutes=30),  # 2:30pm
+            published_at=base_date + timedelta(minutes=30),
+            commit_sha="hotfix1",
+            is_prerelease=False,
+        )
+        deployments.append(hotfix1_deployment)
+        
+        # Hotfix 2: Follow-up fix needed (45 minute turnaround)
+        hotfix2 = Commit(
+            sha="hotfix2",
+            author_name="SRE",
+            author_email="sre@example.com",
+            authored_date=base_date + timedelta(minutes=40),  # 2:40pm
+            committer_name="SRE",
+            committer_email="sre@example.com",
+            committed_date=base_date + timedelta(minutes=45),  # 2:45pm
+            message="HOTFIX: Add logging for payment failures",
+            files_changed=["payment.py", "logging.py"],
+            additions=15,
+            deletions=3,
+        )
+        hotfix2.pr_number = 102
+        commits.append(hotfix2)
+        
+        hotfix2_pr = PullRequest(
+            number=102,
+            title="URGENT: Add payment failure logging",
+            state=PRState.MERGED,
+            created_at=base_date + timedelta(minutes=45),
+            updated_at=base_date + timedelta(minutes=60),
+            closed_at=base_date + timedelta(minutes=60),
+            merged_at=base_date + timedelta(minutes=60),  # 15 min review
+            merge_commit_sha="hotfix2",
+            author="sre",
+            labels=["hotfix", "urgent"],
+            commits=["hotfix2"],
+        )
+        prs.append(hotfix2_pr)
+        
+        hotfix2_deployment = Deployment(
+            tag_name="v2.0.2",
+            name="Hotfix - Payment logging",
+            created_at=base_date + timedelta(minutes=75),  # 3:15pm
+            published_at=base_date + timedelta(minutes=75),
+            commit_sha="hotfix2",
+            is_prerelease=False,
+        )
+        deployments.append(hotfix2_deployment)
+        
+        # Calculate daily metrics
+        config = MetricsConfig.daily_all()
+        results = calculator.calculate(
+            commits, prs, deployments,
+            base_date - timedelta(days=3),
+            base_date + timedelta(days=1),
+            config
+        )
+        
+        # Find the hotfix day
+        hotfix_day = None
+        for result in results:
+            if result.deployment_count == 2:  # Day with both hotfixes
+                hotfix_day = result
+                break
+        
+        assert hotfix_day is not None, "Should find day with hotfixes"
+        
+        # Verify hotfix metrics characteristics
+        assert hotfix_day.deployment_count == 2
+        assert hotfix_day.deployment_frequency == 2.0  # 2 deployments in one day
+        
+        # Lead time should be very short (median of 0.33 and 0.58 hours)
+        assert hotfix_day.lead_time_for_changes < 1.0, \
+            f"Hotfixes should have <1 hour lead time, got {hotfix_day.lead_time_for_changes}"
+        
+        # Should have data from both hotfixes
+        assert hotfix_day.lead_time_data_points == 2
+        
+        # Neither hotfix failed
+        assert hotfix_day.change_failure_rate == 0.0
+        
+        # Compare with normal deployment day
+        normal_day = None
+        for result in results:
+            if result.deployment_count == 1 and result.lead_time_for_changes and result.lead_time_for_changes > 24:
+                normal_day = result
+                break
+                
+        assert normal_day is not None, "Should find normal deployment day"
+        
+        # Normal deployment should have much longer lead time
+        assert normal_day.lead_time_for_changes > 24.0, \
+            "Normal deployment should have >24 hour lead time"
+        
+        # This demonstrates that DORA metrics work as a system:
+        # - Deployment frequency is high (2/day) 
+        # - Lead time looks great (<1 hour)
+        # - Change failure rate tells the real story
+        #
+        # If these hotfixes were due to earlier failures, the failure rate
+        # would reveal the unhealthy pattern. The metrics are self-balancing:
+        # you can't game frequency without failure rate exposing the problem.
+    
+    def test_hotfix_cascade_scenario(self):
+        """
+        Test metrics for a cascade of failures and hotfixes.
+        This shows how failure rate reveals unhealthy high frequency.
+        """
+        calculator = MetricsCalculator()
+        base_date = datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)  # 10am
+        
+        commits = []
+        deployments = []
+        
+        # Initial deployment that will fail
+        commit1 = Commit(
+            sha="feature1",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date - timedelta(hours=24),
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date - timedelta(hours=24),
+            message="Feature: New payment provider",
+            files_changed=["payment.py"],
+            additions=200,
+            deletions=50,
+        )
+        commits.append(commit1)
+        
+        deployment1 = Deployment(
+            tag_name="v1.0.0",
+            name="Feature release",
+            created_at=base_date,
+            published_at=base_date,
+            commit_sha="feature1",
+            is_prerelease=False,
+        )
+        deployment1.deployment_failed = True
+        deployment1.failure_resolved_at = base_date + timedelta(hours=4)
+        deployments.append(deployment1)
+        
+        # Hotfix 1 - also fails
+        commit2 = Commit(
+            sha="hotfix1",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date + timedelta(minutes=30),
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date + timedelta(minutes=30),
+            message="HOTFIX: Fix payment NPE",
+            files_changed=["payment.py"],
+            additions=10,
+            deletions=5,
+        )
+        commits.append(commit2)
+        
+        deployment2 = Deployment(
+            tag_name="v1.0.1",
+            name="Hotfix 1",
+            created_at=base_date + timedelta(hours=1),
+            published_at=base_date + timedelta(hours=1),
+            commit_sha="hotfix1",
+            is_prerelease=False,
+        )
+        deployment2.deployment_failed = True
+        deployment2.failure_resolved_at = base_date + timedelta(hours=3)
+        deployments.append(deployment2)
+        
+        # Hotfix 2 - finally works
+        commit3 = Commit(
+            sha="hotfix2",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date + timedelta(hours=2),
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date + timedelta(hours=2),
+            message="HOTFIX: Properly fix payment issue",
+            files_changed=["payment.py"],
+            additions=15,
+            deletions=8,
+        )
+        commits.append(commit3)
+        
+        deployment3 = Deployment(
+            tag_name="v1.0.2",
+            name="Hotfix 2",
+            created_at=base_date + timedelta(hours=3),
+            published_at=base_date + timedelta(hours=3),
+            commit_sha="hotfix2",
+            is_prerelease=False,
+        )
+        deployments.append(deployment3)
+        
+        # Calculate metrics incrementally to show how the day unfolds
+        from dora_metrics.calculators.metrics import MetricsConfig
+        config = MetricsConfig.daily_all()
+        
+        # Metric snapshot 1: After initial deployment (10am)
+        results_10am = calculator.calculate(
+            commits[:1], [], deployments[:1],
+            base_date - timedelta(days=1),
+            base_date + timedelta(hours=1),
+            config
+        )
+        metrics_10am = results_10am[1]
+        
+        # At 10am: One failed deployment
+        assert metrics_10am.deployment_frequency == 0.0  # No successful deployments yet
+        assert metrics_10am.deployment_count == 0
+        assert metrics_10am.change_failure_rate == 100.0  # 1 out of 1 failed
+        assert metrics_10am.failed_deployment_count == 1
+        
+        # Metric snapshot 2: After first hotfix attempt (11am)
+        results_11am = calculator.calculate(
+            commits[:2], [], deployments[:2],
+            base_date - timedelta(days=1),
+            base_date + timedelta(hours=2),
+            config
+        )
+        metrics_11am = results_11am[1]
+        
+        # At 11am: Two failed deployments, panic setting in
+        assert metrics_11am.deployment_frequency == 0.0  # Still no successful deployments
+        assert metrics_11am.deployment_count == 0
+        assert metrics_11am.change_failure_rate == 100.0  # 2 out of 2 failed!
+        assert metrics_11am.failed_deployment_count == 2
+        
+        # Metric snapshot 3: After successful hotfix (1pm)
+        results_1pm = calculator.calculate(
+            commits, [], deployments,
+            base_date - timedelta(days=1),
+            base_date + timedelta(days=1),
+            config
+        )
+        crisis_day = results_1pm[1]  # Final state of the day
+        
+        # Verify which deployments are counted
+        all_deployments_in_period = calculator._get_deployments_in_period(
+            crisis_day.period_start,
+            crisis_day.period_end
+        )
+        
+        # Should have 3 total deployments
+        assert len(all_deployments_in_period) == 3
+        
+        # Verify the successful deployment is the final hotfix (v1.0.2)
+        successful_deployments = [
+            (d[1], d[2]) for d in all_deployments_in_period 
+            if not calculator._is_deployment_failed(d[2] if d[2] else d[1])
+        ]
+        assert len(successful_deployments) == 1
+        assert successful_deployments[0][0].sha == "hotfix2"  # The final fix that worked
+        
+        # Deployment frequency only counts successful deployments (DORA standard)
+        assert crisis_day.deployment_frequency == 1.0  # Only 1 successful deployment
+        assert crisis_day.deployment_count == 1  # Successful deployments
+        
+        # Low lead time looks "good" 
+        assert crisis_day.lead_time_for_changes < 4.0  # Fast deployments!
+        
+        # But failure rate tells the real story
+        assert crisis_day.change_failure_rate > 60.0  # 2 out of 3 failed!
+        assert crisis_day.failed_deployment_count == 2
+        
+        # And MTTR shows the team spent hours fixing issues
+        assert crisis_day.mean_time_to_restore > 1.0  # Hours spent firefighting
+        
+        # This pattern reveals the truth: even though frequency appears low,
+        # the high failure rate (66%) and significant MTTR show the team
+        # spent the day firefighting, not delivering value.
+        
+        # The incremental view shows the story:
+        # - 10am: Feature fails, 100% failure rate, frequency = 0
+        # - 11am: First hotfix fails too, still 100% failure rate, frequency = 0  
+        # - 1pm: Finally fixed, but 66% failure rate reveals the chaos
+        # This demonstrates why viewing metrics together matters - frequency alone
+        # would show "1 deployment today" but miss the 3 hours of crisis.

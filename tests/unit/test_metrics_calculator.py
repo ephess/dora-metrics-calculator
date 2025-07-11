@@ -211,26 +211,6 @@ class TestMetricsCalculator:
         assert periods[2][0] == datetime(2025, 1, 1, tzinfo=timezone.utc)
         assert periods[2][1] == datetime(2025, 3, 1, tzinfo=timezone.utc)
         
-    def test_lead_time_calculation(self, calculator, sample_commits, sample_deployments):
-        """Test lead time calculation."""
-        calculator._build_lookups(sample_commits, [], sample_deployments)
-        
-        # Deployment on Jan 3 for commit2 (authored Jan 3)
-        deployments = calculator._get_deployments_in_period(
-            datetime(2024, 1, 3, tzinfo=timezone.utc),
-            datetime(2024, 1, 4, tzinfo=timezone.utc)
-        )
-        
-        lead_time, data_points = calculator._calculate_lead_time(
-            deployments,
-            datetime(2024, 1, 3, tzinfo=timezone.utc),
-            datetime(2024, 1, 4, tzinfo=timezone.utc)
-        )
-        
-        # Lead time should be 1 hour (commit2 authored at Jan 3 00:00, deployed at Jan 3 01:00)
-        assert lead_time == 1.0
-        assert data_points == 1
-        
     def test_deployment_frequency(self, calculator, sample_commits, sample_deployments):
         """Test deployment frequency calculation."""
         calculator._build_lookups(sample_commits, [], sample_deployments)
@@ -399,3 +379,131 @@ class TestMetricsCalculator:
         json_str = metrics.to_json()
         assert "lead_time_for_changes_hours" in json_str
         assert "24.5" in json_str
+        
+    def test_lead_time_should_include_all_commits_between_deployments(self, calculator):
+        """
+        Test that lead time calculation includes ALL commits deployed,
+        not just the deployment commit itself.
+        
+        Current behavior: Only deployment commit's lead time is calculated
+        Expected behavior: All commits since last deployment should be included
+        """
+        base_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        
+        commits = []
+        
+        # First deployment with single commit
+        commit1 = Commit(
+            sha="commit1",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date,
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date,
+            message="Initial commit",
+            files_changed=["file1.py"],
+            additions=100,
+            deletions=0,
+        )
+        commits.append(commit1)
+        
+        deployment1 = Deployment(
+            tag_name="v1.0.0",
+            name="First release",
+            created_at=base_date + timedelta(hours=1),
+            published_at=base_date + timedelta(hours=1),
+            commit_sha="commit1",
+            is_prerelease=False,
+        )
+        
+        # Multiple commits for second deployment
+        # These represent work done between v1.0.0 and v1.1.0
+        commit2 = Commit(
+            sha="commit2",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date + timedelta(days=1),
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date + timedelta(days=1),
+            message="Feature A",
+            files_changed=["feature_a.py"],
+            additions=50,
+            deletions=10,
+        )
+        commits.append(commit2)
+        
+        commit3 = Commit(
+            sha="commit3",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date + timedelta(days=2),
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date + timedelta(days=2),
+            message="Feature B",
+            files_changed=["feature_b.py"],
+            additions=75,
+            deletions=5,
+        )
+        commits.append(commit3)
+        
+        # Deployment commit
+        commit4 = Commit(
+            sha="commit4",
+            author_name="Dev",
+            author_email="dev@example.com",
+            authored_date=base_date + timedelta(days=3),
+            committer_name="Dev",
+            committer_email="dev@example.com",
+            committed_date=base_date + timedelta(days=3),
+            message="Release prep v1.1.0",
+            files_changed=["version.py"],
+            additions=2,
+            deletions=2,
+        )
+        commits.append(commit4)
+        
+        deployment2 = Deployment(
+            tag_name="v1.1.0",
+            name="Second release",
+            created_at=base_date + timedelta(days=3, hours=2),
+            published_at=base_date + timedelta(days=3, hours=2),
+            commit_sha="commit4",
+            is_prerelease=False,
+        )
+        
+        # Calculate metrics with daily reporting
+        from dora_metrics.calculators.metrics import MetricsConfig
+        config = MetricsConfig.daily_all()
+        
+        results = calculator.calculate(
+            commits,
+            [],
+            [deployment1, deployment2],
+            base_date,
+            base_date + timedelta(days=4),
+            config
+        )
+        
+        # Debug: check results length
+        assert len(results) == 4, f"Expected 4 daily results, got {len(results)}"
+        
+        # Get the lead time for the second deployment period
+        day3_metrics = results[3]  # Day 3 when deployment2 happened
+        
+        # CURRENT BEHAVIOR: Only tracks commit4's lead time (2 hours)
+        # EXPECTED BEHAVIOR: Should track lead times for commit2, commit3, and commit4
+        # - commit2: (day 3 + 2h) - (day 1) = 50 hours
+        # - commit3: (day 3 + 2h) - (day 2) = 26 hours  
+        # - commit4: (day 3 + 2h) - (day 3) = 2 hours
+        # Median of [2, 26, 50] = 26 hours
+        
+        # This test will FAIL with current implementation
+        assert day3_metrics.lead_time_for_changes == 26.0, \
+            f"Expected median lead time of 26h for all commits, got {day3_metrics.lead_time_for_changes}h"
+        
+        # Also check that we counted all commits
+        assert day3_metrics.lead_time_data_points == 3, \
+            f"Expected 3 data points (all commits since v1.0.0), got {day3_metrics.lead_time_data_points}"

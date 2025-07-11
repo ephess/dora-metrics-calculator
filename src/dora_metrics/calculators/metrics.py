@@ -166,6 +166,8 @@ class MetricsCalculator:
         self.commits_by_sha: Dict[str, Commit] = {}
         self.prs_by_number: Dict[int, PullRequest] = {}
         self.deployments_by_tag: Dict[str, Deployment] = {}
+        self.all_deployments: List[Tuple[datetime, Commit, Optional[Deployment]]] = []
+        self.commits_ordered: List[Commit] = []
         
     def calculate(
         self,
@@ -220,6 +222,12 @@ class MetricsCalculator:
         self.commits_by_sha = {c.sha: c for c in commits}
         self.prs_by_number = {pr.number: pr for pr in pull_requests}
         self.deployments_by_tag = {d.tag_name: d for d in deployments}
+        
+        # Keep ordered list of commits for finding ranges
+        self.commits_ordered = sorted(commits, key=lambda c: c.committed_date)
+        
+        # Build complete deployment list for tracking previous deployments
+        self.all_deployments = self._get_all_deployments_sorted()
         
     def _get_period_boundaries(
         self,
@@ -370,6 +378,27 @@ class MetricsCalculator:
         deployments.sort(key=lambda x: x[0])
         return deployments
         
+    def _get_all_deployments_sorted(self) -> List[Tuple[datetime, Commit, Optional[Deployment]]]:
+        """Get all deployments sorted by time (for finding previous deployments)."""
+        deployments = []
+        
+        # GitHub deployments
+        for deployment in self.deployments_by_tag.values():
+            deploy_time = deployment.published_at or deployment.created_at
+            if deployment.commit_sha in self.commits_by_sha:
+                commit = self.commits_by_sha[deployment.commit_sha]
+                deployments.append((deploy_time, commit, deployment))
+                
+        # Manual deployments from commits
+        for commit in self.commits_by_sha.values():
+            if getattr(commit, "is_manual_deployment", None):
+                deploy_time = getattr(commit, "manual_deployment_timestamp", commit.committed_date)
+                deployments.append((deploy_time, commit, None))
+                
+        # Sort by deployment time
+        deployments.sort(key=lambda x: x[0])
+        return deployments
+        
     def _calculate_lead_time(
         self,
         deployments: List[Tuple[datetime, Commit, Optional[Deployment]]],
@@ -392,7 +421,8 @@ class MetricsCalculator:
         for deploy_time, deploy_commit, deployment in deployments:
             # Get all commits in this deployment
             commits_in_deployment = self._get_commits_in_deployment(
-                deployment if deployment else deploy_commit
+                deployment if deployment else deploy_commit,
+                deploy_time
             )
             
             for commit in commits_in_deployment:
@@ -499,26 +529,55 @@ class MetricsCalculator:
         
     def _get_commits_in_deployment(
         self,
-        deployment: Union[Deployment, Commit]
+        deployment: Union[Deployment, Commit],
+        deploy_time: Optional[datetime] = None
     ) -> List[Commit]:
         """
         Get all commits included in a deployment.
         
-        Note: This is a simplified implementation. In a full system, you would
-        track commit ranges between deployments to know exactly which commits
-        are included in each deployment.
+        This includes all commits since the previous deployment.
         """
         commits = []
         
+        # Get deployment commit
         if isinstance(deployment, Deployment):
-            # For GitHub deployments, we currently only return the deployment commit
-            # A full implementation would track all commits since the last deployment
-            if deployment.commit_sha in self.commits_by_sha:
-                commits.append(self.commits_by_sha[deployment.commit_sha])
+            if deployment.commit_sha not in self.commits_by_sha:
+                return []
+            deployment_commit = self.commits_by_sha[deployment.commit_sha]
+            if not deploy_time:
+                deploy_time = deployment.published_at or deployment.created_at
         else:
-            # For manual deployments, just the commit itself
-            commits.append(deployment)
-            
+            # Manual deployment
+            deployment_commit = deployment
+            if not deploy_time:
+                deploy_time = getattr(deployment, "manual_deployment_timestamp", deployment.committed_date)
+        
+        # Find previous deployment
+        prev_deployment = None
+        prev_deploy_time = None
+        
+        for d_time, d_commit, d_deployment in self.all_deployments:
+            if d_time < deploy_time:
+                prev_deployment = d_deployment if d_deployment else d_commit
+                prev_deploy_time = d_time
+            else:
+                break
+        
+        # Get all commits between previous deployment and this one
+        if prev_deployment:
+            # Find commits after previous deployment and up to current deployment
+            for commit in self.commits_ordered:
+                # Include commits authored after the previous deployment
+                # and up to (and including) the current deployment commit
+                if (commit.authored_date > prev_deploy_time and 
+                    commit.authored_date <= deployment_commit.authored_date):
+                    commits.append(commit)
+        else:
+            # First deployment - include all commits up to deployment
+            for commit in self.commits_ordered:
+                if commit.authored_date <= deployment_commit.authored_date:
+                    commits.append(commit)
+        
         return commits
         
     def _is_deployment_failed(self, deployment: Union[Deployment, Commit]) -> bool:
