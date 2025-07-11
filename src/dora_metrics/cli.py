@@ -276,7 +276,7 @@ def import_csv(ctx, repo: str, input: str):
 
 @cli.command()
 @click.option('--repo', required=True, help='Repository name')
-@click.option('--period', type=click.Choice(['daily', 'weekly', 'monthly']), default='weekly')
+@click.option('--period', type=click.Choice(['daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'rolling_7_days', 'rolling_30_days', 'rolling_90_days']), default='weekly')
 @click.option('--since', help='Start date (YYYY-MM-DD)')
 @click.option('--until', help='End date (YYYY-MM-DD)')
 @click.option('--output-format', type=click.Choice(['json', 'table']), default='table')
@@ -303,8 +303,18 @@ def calculate(ctx, repo: str, period: str, since: Optional[str], until: Optional
             metrics = calculator.calculate_daily_metrics(commits, deployments, since_date, until_date)
         elif period == 'weekly':
             metrics = calculator.calculate_weekly_metrics(commits, deployments, since_date, until_date)
-        else:  # monthly
+        elif period == 'monthly':
             metrics = calculator.calculate_monthly_metrics(commits, deployments, since_date, until_date)
+        elif period == 'quarterly':
+            metrics = calculator.calculate_quarterly_metrics(commits, deployments, since_date, until_date)
+        elif period == 'yearly':
+            metrics = calculator.calculate_yearly_metrics(commits, deployments, since_date, until_date)
+        elif period == 'rolling_7_days':
+            metrics = calculator.calculate_rolling_7_days_metrics(commits, deployments, since_date, until_date)
+        elif period == 'rolling_30_days':
+            metrics = calculator.calculate_rolling_30_days_metrics(commits, deployments, since_date, until_date)
+        else:  # rolling_90_days
+            metrics = calculator.calculate_rolling_90_days_metrics(commits, deployments, since_date, until_date)
         
         # Output results
         if output_format == 'json':

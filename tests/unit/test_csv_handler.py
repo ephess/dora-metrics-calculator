@@ -222,6 +222,39 @@ class TestCSVHandler:
         assert commit.manual_deployment_failed is False
         assert commit.notes == "Manual production deployment"
         
+    def test_import_commits_manual_deployment_failed_parsing(self, temp_dir):
+        """Test that manual_deployment_failed is correctly parsed as boolean."""
+        handler = CSVHandler()
+        csv_content = """sha,author_name,author_email,authored_date,committer_name,committer_email,committed_date,message,files_changed,additions,deletions,pr_number,deployment_tag,is_manual_deployment,manual_deployment_timestamp,manual_deployment_failed,notes
+abc123,Alice,alice@example.com,2024-01-01T10:00:00Z,Alice,alice@example.com,2024-01-01T10:00:00Z,Deploy v1.0,file1.py,10,5,1,v1.0,true,2024-01-01T12:00:00Z,false,Initial deployment
+def456,Bob,bob@example.com,2024-01-02T10:00:00Z,Bob,bob@example.com,2024-01-02T10:00:00Z,Deploy v1.1,file2.py,20,10,2,v1.1,true,2024-01-02T12:00:00Z,true,Failed deployment
+ghi789,Charlie,charlie@example.com,2024-01-03T10:00:00Z,Charlie,charlie@example.com,2024-01-03T10:00:00Z,Deploy v1.2,file3.py,30,15,3,v1.2,true,2024-01-03T12:00:00Z,FALSE,Successful deployment
+"""
+        csv_file = temp_dir / "test_failed_parsing.csv"
+        csv_file.write_text(csv_content)
+        
+        commits = handler.import_commits(csv_file)
+        
+        assert len(commits) == 3
+        
+        # First commit - manual_deployment_failed = "false"
+        assert commits[0].sha == "abc123"
+        assert commits[0].is_manual_deployment is True
+        assert commits[0].manual_deployment_failed is False  # Should be boolean False
+        assert isinstance(commits[0].manual_deployment_failed, bool)
+        
+        # Second commit - manual_deployment_failed = "true"
+        assert commits[1].sha == "def456"
+        assert commits[1].is_manual_deployment is True
+        assert commits[1].manual_deployment_failed is True  # Should be boolean True
+        assert isinstance(commits[1].manual_deployment_failed, bool)
+        
+        # Third commit - manual_deployment_failed = "FALSE"
+        assert commits[2].sha == "ghi789"
+        assert commits[2].is_manual_deployment is True
+        assert commits[2].manual_deployment_failed is False  # Should be boolean False
+        assert isinstance(commits[2].manual_deployment_failed, bool)
+
     def test_import_commits_default_timestamp(self, temp_dir):
         """Test that manual deployment timestamp defaults to commit timestamp."""
         csv_path = temp_dir / "commits.csv"

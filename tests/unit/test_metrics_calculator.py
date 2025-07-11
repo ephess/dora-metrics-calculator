@@ -246,8 +246,8 @@ class TestMetricsCalculator:
             datetime(2024, 1, 9, tzinfo=timezone.utc)
         )
         
-        # 1 failure out of 2 deployments = 50%
-        assert rate == 50.0
+        # 1 failure out of 2 deployments = 0.5 (50% as ratio)
+        assert rate == 0.5
         assert failed == 1
         
     def test_mttr_calculation(self, calculator, sample_commits, sample_deployments):
@@ -309,8 +309,8 @@ class TestMetricsCalculator:
             datetime(2024, 1, 15, tzinfo=timezone.utc)
         )
         
-        # 1 failure out of 2 = 50%
-        assert rate == 50.0
+        # 1 failure out of 2 = 0.5 (50% as ratio)
+        assert rate == 0.5
         assert failed == 1
         
     def test_rolling_window(self, calculator, sample_commits, sample_deployments):
@@ -360,7 +360,7 @@ class TestMetricsCalculator:
         metrics = DORAMetrics(
             lead_time_for_changes=24.5,
             deployment_frequency=2.0,
-            change_failure_rate=10.0,
+            change_failure_rate=0.1,
             mean_time_to_restore=4.0,
             period_start=datetime(2024, 1, 1, tzinfo=timezone.utc),
             period_end=datetime(2024, 1, 2, tzinfo=timezone.utc),
@@ -583,3 +583,75 @@ class TestMetricsCalculator:
         # Check min/max
         assert day_metrics.lead_time_min == 1.0
         assert day_metrics.lead_time_max == 100.0
+    
+    def test_manual_deployment_failed_as_boolean(self, calculator):
+        """Test that manual_deployment_failed works with boolean values (as CSV import produces)."""
+        base_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        
+        # Create commits with manual deployments
+        # Note: CSV import converts string "true"/"false" to boolean True/False
+        commits = [
+            Commit(
+                sha="commit1",
+                author_name="Dev",
+                author_email="dev@example.com",
+                authored_date=base_date,
+                committer_name="Dev",
+                committer_email="dev@example.com",
+                committed_date=base_date,
+                message="Deploy v1.0",
+                is_manual_deployment=True,
+                manual_deployment_timestamp=base_date,
+                manual_deployment_failed=False,  # Boolean False (as CSV import produces)
+                deployment_tag="v1.0"
+            ),
+            Commit(
+                sha="commit2",
+                author_name="Dev",
+                author_email="dev@example.com",
+                authored_date=base_date.replace(day=2),
+                committer_name="Dev",
+                committer_email="dev@example.com",
+                committed_date=base_date.replace(day=2),
+                message="Deploy v1.1 - hotfix",
+                is_manual_deployment=True,
+                manual_deployment_timestamp=base_date.replace(day=2),
+                manual_deployment_failed=True,  # Boolean True (as CSV import produces)
+                deployment_tag="v1.1"
+            ),
+            Commit(
+                sha="commit3",
+                author_name="Dev",
+                author_email="dev@example.com",
+                authored_date=base_date.replace(day=3),
+                committer_name="Dev",
+                committer_email="dev@example.com",
+                committed_date=base_date.replace(day=3),
+                message="Deploy v1.2",
+                is_manual_deployment=True,
+                manual_deployment_timestamp=base_date.replace(day=3),
+                manual_deployment_failed=False,  # Boolean False (as CSV import produces)
+                deployment_tag="v1.2"
+            ),
+        ]
+        
+        # Calculate metrics
+        config = MetricsConfig(reporting_period=Period.MONTHLY)
+        metrics_list = calculator.calculate(
+            commits=commits,
+            pull_requests=[],
+            deployments=[],
+            start_date=base_date,
+            end_date=base_date.replace(month=2),
+            config=config
+        )
+        
+        assert len(metrics_list) == 1
+        metrics = metrics_list[0]
+        
+        # Should have 2 successful deployments, 1 failed
+        # deployment_count only counts successful deployments (DORA standard)
+        assert metrics.deployment_count == 2
+        assert metrics.failed_deployment_count == 1
+        # Change failure rate should be 0.3333 (1/3 total deployments)
+        assert metrics.change_failure_rate == pytest.approx(0.3333, rel=0.01)

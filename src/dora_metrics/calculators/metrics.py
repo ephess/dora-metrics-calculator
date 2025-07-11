@@ -102,7 +102,7 @@ class DORAMetrics:
     """Container for DORA metrics results."""
     lead_time_for_changes: Optional[float]  # Hours (median)
     deployment_frequency: Optional[float]  # Deployments per day
-    change_failure_rate: Optional[float]  # Percentage
+    change_failure_rate: Optional[float]  # Ratio (0.0 to 1.0)
     mean_time_to_restore: Optional[float]  # Hours
     
     # Period this metric represents
@@ -588,7 +588,7 @@ class MetricsCalculator:
             if self._is_deployment_failed(d[2] if d[2] else d[1])
         )
         
-        return (failed / len(deployments)) * 100, failed
+        return failed / len(deployments), failed
         
     def _calculate_mttr(
         self,
@@ -770,5 +770,131 @@ class MetricsCalculator:
         for m in metrics_list:
             # Format period as YYYY-MM
             period_key = m.period_start.strftime("%Y-%m")
+            result[period_key] = m
+        return result
+    
+    def calculate_quarterly_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate quarterly DORA metrics."""
+        # Default to last 2 years if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=730)
+        
+        config = MetricsConfig(reporting_period=Period.QUARTERLY)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by quarter string  
+        result = {}
+        for m in metrics_list:
+            # Format period as YYYY-Q#
+            quarter = (m.period_start.month - 1) // 3 + 1
+            period_key = f"{m.period_start.year}-Q{quarter}"
+            result[period_key] = m
+        return result
+    
+    def calculate_yearly_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate yearly DORA metrics."""
+        # Default to last 5 years if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=1825)  # 5 years
+        
+        config = MetricsConfig(reporting_period=Period.YEARLY)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by year string  
+        result = {}
+        for m in metrics_list:
+            # Format period as YYYY
+            period_key = str(m.period_start.year)
+            result[period_key] = m
+        return result
+    
+    def calculate_rolling_7_days_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate rolling 7-day DORA metrics."""
+        # Default to last 30 days if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=30)
+        
+        config = MetricsConfig(reporting_period=Period.ROLLING_7_DAYS)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by date string  
+        result = {}
+        for m in metrics_list:
+            # Format period as YYYY-MM-DD
+            period_key = m.period_start.strftime("%Y-%m-%d")
+            result[period_key] = m
+        return result
+    
+    def calculate_rolling_30_days_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate rolling 30-day DORA metrics."""
+        # Default to last 90 days if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=90)
+        
+        config = MetricsConfig(reporting_period=Period.ROLLING_30_DAYS)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by date string  
+        result = {}
+        for m in metrics_list:
+            # Format period as YYYY-MM-DD
+            period_key = m.period_start.strftime("%Y-%m-%d")
+            result[period_key] = m
+        return result
+    
+    def calculate_rolling_90_days_metrics(
+        self,
+        commits: List[Commit],
+        deployments: List[Deployment],
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None
+    ) -> Dict[str, DORAMetrics]:
+        """Calculate rolling 90-day DORA metrics."""
+        # Default to last 180 days if no range specified
+        if until is None:
+            until = datetime.now(timezone.utc)
+        if since is None:
+            since = until - timedelta(days=180)
+        
+        config = MetricsConfig(reporting_period=Period.ROLLING_90_DAYS)
+        metrics_list = self.calculate(commits, [], deployments, since, until, config)
+        
+        # Convert to dict keyed by date string  
+        result = {}
+        for m in metrics_list:
+            # Format period as YYYY-MM-DD
+            period_key = m.period_start.strftime("%Y-%m-%d")
             result[period_key] = m
         return result

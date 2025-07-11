@@ -78,7 +78,7 @@ class TestMetricsScenarios:
         assert metrics.lead_time_for_changes == 2.0
         
         # Low failure rate (1/14 ≈ 7%)
-        assert 7.0 <= metrics.change_failure_rate <= 8.0
+        assert 0.07 <= metrics.change_failure_rate <= 0.08
         
         # Fast MTTR (30 minutes = 0.5 hours)
         assert metrics.mean_time_to_restore == 0.5
@@ -147,7 +147,7 @@ class TestMetricsScenarios:
         assert metrics.lead_time_for_changes == 120.0
         
         # High failure rate (50%)
-        assert metrics.change_failure_rate == 50.0
+        assert metrics.change_failure_rate == 0.5
         
         # Slow MTTR (2 days = 48 hours)
         assert metrics.mean_time_to_restore == 48.0
@@ -344,7 +344,7 @@ class TestMetricsScenarios:
         assert metrics.deployment_count == 2
         
         # 1 failure out of 3 total
-        assert abs(metrics.change_failure_rate - (100.0 / 3.0)) < 0.01
+        assert abs(metrics.change_failure_rate - (1.0 / 3.0)) < 0.01
         assert metrics.failed_deployment_count == 1
         
         # Lead times for all deployments
@@ -772,7 +772,7 @@ class TestMetricsScenarios:
         # At 10am: One failed deployment
         assert metrics_10am.deployment_frequency == 0.0  # No successful deployments yet
         assert metrics_10am.deployment_count == 0
-        assert metrics_10am.change_failure_rate == 100.0  # 1 out of 1 failed
+        assert metrics_10am.change_failure_rate == 1.0  # 1 out of 1 failed
         assert metrics_10am.failed_deployment_count == 1
         
         # Metric snapshot 2: After first hotfix attempt (11am)
@@ -787,7 +787,7 @@ class TestMetricsScenarios:
         # At 11am: Two failed deployments, panic setting in
         assert metrics_11am.deployment_frequency == 0.0  # Still no successful deployments
         assert metrics_11am.deployment_count == 0
-        assert metrics_11am.change_failure_rate == 100.0  # 2 out of 2 failed!
+        assert metrics_11am.change_failure_rate == 1.0  # 2 out of 2 failed!
         assert metrics_11am.failed_deployment_count == 2
         
         # Metric snapshot 3: After successful hotfix (1pm)
@@ -824,7 +824,7 @@ class TestMetricsScenarios:
         assert crisis_day.lead_time_for_changes < 4.0  # Fast deployments!
         
         # But failure rate tells the real story
-        assert crisis_day.change_failure_rate > 60.0  # 2 out of 3 failed!
+        assert crisis_day.change_failure_rate > 0.6  # 2 out of 3 failed!
         assert crisis_day.failed_deployment_count == 2
         
         # And MTTR shows the team spent hours fixing issues
