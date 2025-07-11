@@ -158,7 +158,7 @@ class TestCSVWorkflows:
         # Verify annotations
         assert annotated_commits[0].is_manual_deployment is True
         assert annotated_commits[0].manual_deployment_timestamp == datetime(2024, 1, 1, 18, 0, tzinfo=timezone.utc)
-        assert annotated_commits[0].manual_deployment_failed is None  # Not set
+        assert annotated_commits[0].manual_deployment_failed is False  # Default value
         assert annotated_commits[0].notes == "Regular release"
         
         assert annotated_commits[1].is_manual_deployment is True
@@ -263,7 +263,7 @@ class TestCSVWorkflows:
         assert final[0].is_manual_deployment is True
         assert final[0].notes == "Historical deployment"
         assert final[1].sha == "new001"
-        assert final[1].is_manual_deployment is None
+        assert final[1].is_manual_deployment is False  # Default value
         
     def test_pr_hotfix_override(self, temp_dir):
         """Test manual override of hotfix detection."""
@@ -363,4 +363,4 @@ class TestCSVWorkflows:
         assert imported[0].deployment_failed is True
         assert imported[0].failure_resolved_at == datetime(2024, 1, 15, 14, 15, tzinfo=timezone.utc)
         assert "migration failed" in imported[0].notes
-        assert imported[1].deployment_failed is None  # Not failed
+        assert imported[1].deployment_failed is False  # Default value

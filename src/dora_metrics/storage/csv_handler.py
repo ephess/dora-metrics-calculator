@@ -106,15 +106,11 @@ class CSVHandler:
                 "deletions": commit.deletions,
                 "pr_number": commit.pr_number or "",
                 "deployment_tag": commit.deployment_tag or "",
-                "is_manual_deployment": str(getattr(commit, "is_manual_deployment", "")).lower() 
-                                       if hasattr(commit, "is_manual_deployment") and 
-                                          getattr(commit, "is_manual_deployment") is not None else "",
+                "is_manual_deployment": "true" if getattr(commit, "is_manual_deployment", False) else "",
                 "manual_deployment_timestamp": getattr(commit, "manual_deployment_timestamp", "").isoformat() 
                                               if hasattr(commit, "manual_deployment_timestamp") and 
                                                  getattr(commit, "manual_deployment_timestamp") else "",
-                "manual_deployment_failed": str(getattr(commit, "manual_deployment_failed", "")).lower() 
-                                           if hasattr(commit, "manual_deployment_failed") and 
-                                              getattr(commit, "manual_deployment_failed") is not None else "",
+                "manual_deployment_failed": "true" if getattr(commit, "manual_deployment_failed", False) else "",
                 "notes": getattr(commit, "notes", ""),
             }
             rows.append(row)
@@ -174,8 +170,7 @@ class CSVHandler:
                 "published_at": deployment.published_at.isoformat() if deployment.published_at else "",
                 "commit_sha": deployment.commit_sha,
                 "is_prerelease": str(deployment.is_prerelease).lower(),
-                "deployment_failed": str(getattr(deployment, "deployment_failed", "")).lower() 
-                                   if hasattr(deployment, "deployment_failed") else "",
+                "deployment_failed": "true" if getattr(deployment, "deployment_failed", False) else "",
                 "failure_resolved_at": getattr(deployment, "failure_resolved_at", "").isoformat() 
                                      if hasattr(deployment, "failure_resolved_at") and 
                                         getattr(deployment, "failure_resolved_at") else "",
@@ -219,19 +214,21 @@ class CSVHandler:
             )
             
             # Add annotation attributes
-            commit.is_manual_deployment = self._parse_bool(row.get("is_manual_deployment", ""))
+            is_manual = self._parse_bool(row.get("is_manual_deployment", ""))
+            if is_manual is not None:
+                commit.is_manual_deployment = is_manual
             
             # Parse manual deployment timestamp if provided
             if row.get("manual_deployment_timestamp", "").strip():
                 commit.manual_deployment_timestamp = self._parse_datetime(row["manual_deployment_timestamp"])
             else:
                 # Default to commit timestamp if marked as manual deployment but no timestamp given
-                if commit.is_manual_deployment:
+                if getattr(commit, "is_manual_deployment", False):
                     commit.manual_deployment_timestamp = commit.committed_date
-                else:
-                    commit.manual_deployment_timestamp = None
                     
-            commit.manual_deployment_failed = self._parse_bool(row.get("manual_deployment_failed", ""))
+            failed = self._parse_bool(row.get("manual_deployment_failed", ""))
+            if failed is not None:
+                commit.manual_deployment_failed = failed
             commit.notes = row.get("notes", "")
             
             commits.append(commit)
@@ -306,12 +303,12 @@ class CSVHandler:
             )
             
             # Add annotation attributes
-            deployment.deployment_failed = self._parse_bool(row.get("deployment_failed", ""))
+            failed = self._parse_bool(row.get("deployment_failed", ""))
+            if failed is not None:
+                deployment.deployment_failed = failed
             
             if row.get("failure_resolved_at", "").strip():
                 deployment.failure_resolved_at = self._parse_datetime(row["failure_resolved_at"])
-            else:
-                deployment.failure_resolved_at = None
                 
             deployment.notes = row.get("notes", "")
             

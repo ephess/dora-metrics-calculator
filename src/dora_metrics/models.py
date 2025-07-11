@@ -74,6 +74,10 @@ class Deployment:
     commit_sha: str
     is_prerelease: bool = False
     
+    # Failure tracking fields
+    deployment_failed: bool = False
+    failure_resolved_at: Optional[datetime] = None
+    
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -83,6 +87,8 @@ class Deployment:
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "commit_sha": self.commit_sha,
             "is_prerelease": self.is_prerelease,
+            "deployment_failed": self.deployment_failed,
+            "failure_resolved_at": self.failure_resolved_at.isoformat() if self.failure_resolved_at else None,
         }
     
     @classmethod
@@ -95,6 +101,8 @@ class Deployment:
             published_at=datetime.fromisoformat(data["published_at"]) if data.get("published_at") else None,
             commit_sha=data["commit_sha"],
             is_prerelease=data.get("is_prerelease", False),
+            deployment_failed=data.get("deployment_failed", False),
+            failure_resolved_at=datetime.fromisoformat(data["failure_resolved_at"]) if data.get("failure_resolved_at") else None,
         )
 
 
@@ -120,6 +128,11 @@ class Commit:
     # Deployment info (to be filled later)
     deployment_tag: Optional[str] = None
     
+    # Manual deployment tracking
+    is_manual_deployment: bool = False
+    manual_deployment_timestamp: Optional[datetime] = None
+    manual_deployment_failed: bool = False
+    
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -136,6 +149,9 @@ class Commit:
             "deletions": self.deletions,
             "pr_number": self.pr_number,
             "deployment_tag": self.deployment_tag,
+            "is_manual_deployment": self.is_manual_deployment,
+            "manual_deployment_timestamp": self.manual_deployment_timestamp.isoformat() if self.manual_deployment_timestamp else None,
+            "manual_deployment_failed": self.manual_deployment_failed,
         }
     
     @classmethod
@@ -155,4 +171,7 @@ class Commit:
             deletions=data.get("deletions", 0),
             pr_number=data.get("pr_number"),
             deployment_tag=data.get("deployment_tag"),
+            is_manual_deployment=data.get("is_manual_deployment", False),
+            manual_deployment_timestamp=datetime.fromisoformat(data["manual_deployment_timestamp"]) if data.get("manual_deployment_timestamp") else None,
+            manual_deployment_failed=data.get("manual_deployment_failed", False),
         )
