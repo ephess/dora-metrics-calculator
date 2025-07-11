@@ -28,6 +28,8 @@ class PullRequest:
     commits: List[str] = field(default_factory=list)  # List of commit SHAs
     author: Optional[str] = None
     labels: List[str] = field(default_factory=list)  # PR labels
+    additions: int = 0  # Lines added in the PR
+    deletions: int = 0  # Lines deleted in the PR
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -43,6 +45,8 @@ class PullRequest:
             "commits": self.commits,
             "author": self.author,
             "labels": self.labels,
+            "additions": self.additions,
+            "deletions": self.deletions,
         }
     
     @classmethod
@@ -60,6 +64,8 @@ class PullRequest:
             commits=data.get("commits", []),
             author=data.get("author"),
             labels=data.get("labels", []),
+            additions=data.get("additions", 0),
+            deletions=data.get("deletions", 0),
         )
 
 
